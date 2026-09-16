@@ -1,0 +1,530 @@
+{
+  "meeting_id": "meeting_01_smart_city_disaster",
+  "metadata": {
+    "meeting_id": "meeting_01_smart_city_disaster",
+    "domain": "Smart-City Disaster Protocol",
+    "scenario": "Metropolitan Flash Flood & Power Grid Decoupling Emergency Protocol",
+    "initial_goal": "Formulate an immediate 48-hour municipal mitigation strategy for Category 4 flash floods threatening downtown power substations and the metro transit tunnel system.",
+    "participants": [
+      {
+        "name": "Alice",
+        "role": "Director of Emergency Operations",
+        "organization": "Metro Disaster Response Agency",
+        "avatar_color": "#FF5722"
+      },
+      {
+        "name": "Bob",
+        "role": "Chief Electrical Grid Infrastructure Engineer",
+        "organization": "Municipal Power & Utilities",
+        "avatar_color": "#2196F3"
+      },
+      {
+        "name": "Charlie",
+        "role": "Transit Authority & Public Safety Coordinator",
+        "organization": "Metropolitan Transit Bureau",
+        "avatar_color": "#4CAF50"
+      }
+    ],
+    "environment": "Meta Quest 3 Dual-Space (Near-field Tangible Slate + Holographic Center Arbor)",
+    "created_at": "2026-09-16T05:56:08.879359",
+    "completed_at": "2026-09-16T05:56:08.879359",
+    "total_duration_minutes": 2.21
+  },
+  "dialogue": [
+    {
+      "turn_id": 1,
+      "timestamp_offset_seconds": 0,
+      "speaker": "Alice",
+      "raw_utterance": "Alright team, um, sensor arrays at Lower River Basin just crossed critical flood stage. We have at most 45 minutes before water breaches the downtown electrical substation vault and starts cascading into the Blue Line subway tunnel.",
+      "speech_duration_seconds": 8.5
+    },
+    {
+      "turn_id": 2,
+      "timestamp_offset_seconds": 12,
+      "speaker": "Bob",
+      "raw_utterance": "Looking at the telemetry, if Substation Alpha-9 floods while energized, the arc flash will destroy the transformers and knock out power to all of District 4, including the trauma center. We need to initiate an emergency cold islanding disconnect right now.",
+      "speech_duration_seconds": 9.2
+    },
+    {
+      "turn_id": 3,
+      "timestamp_offset_seconds": 25,
+      "speaker": "Charlie",
+      "raw_utterance": "Wait, Bob! If you cut power to District 4, you instantly kill the primary ventilation exhaust fans and subterranean drainage pumps in the subway tunnels. We still have roughly 1,200 commuters evacuating platform levels at Central Station.",
+      "speech_duration_seconds": 10.1
+    },
+    {
+      "turn_id": 4,
+      "timestamp_offset_seconds": 38,
+      "speaker": "Alice",
+      "raw_utterance": "So we have a direct dependency deadlock between substation shutdown and tunnel evacuation life safety. I am pulling up a new branch on the central Arbor to decouple auxiliary pump circuits before grid disconnect.",
+      "speech_duration_seconds": 9.0
+    },
+    {
+      "turn_id": 5,
+      "timestamp_offset_seconds": 50,
+      "speaker": "Bob",
+      "raw_utterance": "Uh, yeah, we could back-feed the tunnel pumping stations using the 2.5-megawatt battery energy storage system at North Terminal, isolating them from Substation Alpha-9 within 6 minutes.",
+      "speech_duration_seconds": 8.8
+    },
+    {
+      "turn_id": 6,
+      "timestamp_offset_seconds": 62,
+      "speaker": "Charlie",
+      "raw_utterance": "That buys us breathing room, but what about the physical water barrier? Charlie proposing we seal the pneumatic bulkhead floodgates at Tunnel Portal 2 immediately.",
+      "speech_duration_seconds": 7.5
+    },
+    {
+      "turn_id": 7,
+      "timestamp_offset_seconds": 72,
+      "speaker": "Alice",
+      "raw_utterance": "Wait, let's look at the Deliberation Diff Card. If we drop the bulkhead at Portal 2 right now, it traps the secondary commuter egress route through 5th Avenue station. That creates a severe evacuation bottleneck.",
+      "speech_duration_seconds": 8.9
+    },
+    {
+      "turn_id": 8,
+      "timestamp_offset_seconds": 84,
+      "speaker": "Bob",
+      "raw_utterance": "Can we deploy deployable temporary water deflectors at street level first to buy 20 minutes, while staging transit police to divert commuters toward the elevated North Exit?",
+      "speech_duration_seconds": 8.4
+    },
+    {
+      "turn_id": 9,
+      "timestamp_offset_seconds": 95,
+      "speaker": "Charlie",
+      "raw_utterance": "Yes! If we route through North Exit, that route is 4 meters above the 100-year flood line. That resolves the egress hazard.",
+      "speech_duration_seconds": 7.2
+    },
+    {
+      "turn_id": 10,
+      "timestamp_offset_seconds": 105,
+      "speaker": "Alice",
+      "raw_utterance": "Excellent. Let's merge the phased bulkhead closure protocol into the canonical tree: battery back-feed first, then North Exit evacuation diversion, then Portal 2 pneumatic seal at T-plus 25 minutes.",
+      "speech_duration_seconds": 9.5
+    },
+    {
+      "turn_id": 11,
+      "timestamp_offset_seconds": 118,
+      "speaker": "Bob",
+      "raw_utterance": "I vote approve on the amended branch. Utilities team is already queuing the battery switchgear commands.",
+      "speech_duration_seconds": 5.8
+    },
+    {
+      "turn_id": 12,
+      "timestamp_offset_seconds": 126,
+      "speaker": "Charlie",
+      "raw_utterance": "Transit bureau votes approve. Diverting crowds now via automated PA and mobile geo-fenced push alerts.",
+      "speech_duration_seconds": 6.3
+    }
+  ],
+  "slate_extractions": [
+    {
+      "card_id": "slate_c001",
+      "turn_id": 1,
+      "speaker": "Alice",
+      "raw_utterance": "Alright team, um, sensor arrays at Lower River Basin just crossed critical flood stage. We have at most 45 minutes before water breaches the downtown electrical substation vault and starts cascading into the Blue Line subway tunnel.",
+      "distilled_text": "Sensor arrays at Lower River Basin crossed critical flood stage; 45 minutes until water breaches downtown electrical substation.",
+      "intent_tag": "claim",
+      "extracted_at_second": 8,
+      "status": "sandboxed"
+    },
+    {
+      "card_id": "slate_c002",
+      "turn_id": 2,
+      "speaker": "Bob",
+      "raw_utterance": "Looking at the telemetry, if Substation Alpha-9 floods while energized, the arc flash will destroy the transformers and knock out power to all of District 4, including the trauma center. We need to initiate an emergency cold islanding disconnect right now.",
+      "distilled_text": "Substation Alpha-9 flooding risks arc flash destroying transformers and knocking out power in District 4.",
+      "intent_tag": "claim",
+      "extracted_at_second": 21,
+      "status": "sandboxed"
+    },
+    {
+      "card_id": "slate_c003",
+      "turn_id": 3,
+      "speaker": "Charlie",
+      "raw_utterance": "Wait, Bob! If you cut power to District 4, you instantly kill the primary ventilation exhaust fans and subterranean drainage pumps in the subway tunnels. We still have roughly 1,200 commuters evacuating platform levels at Central Station.",
+      "distilled_text": "Cutting power to District 4 kills ventilation and drainage in subway tunnels; 1,200 commuters are evacuating.",
+      "intent_tag": "claim",
+      "extracted_at_second": 35,
+      "status": "sandboxed"
+    },
+    {
+      "card_id": "slate_c004",
+      "turn_id": 4,
+      "speaker": "Alice",
+      "raw_utterance": "So we have a direct dependency deadlock between substation shutdown and tunnel evacuation life safety. I am pulling up a new branch on the central Arbor to decouple auxiliary pump circuits before grid disconnect.",
+      "distilled_text": "Direct dependency deadlock between substation shutdown and tunnel evacuation. Decoupling auxiliary pump circuits via new branch.",
+      "intent_tag": "action",
+      "extracted_at_second": 47,
+      "status": "proposed"
+    },
+    {
+      "card_id": "slate_c005",
+      "turn_id": 5,
+      "speaker": "Bob",
+      "raw_utterance": "Uh, yeah, we could back-feed the tunnel pumping stations using the 2.5-megawatt battery energy storage system at North Terminal, isolating them from Substation Alpha-9 within 6 minutes.",
+      "distilled_text": "Back-feed tunnel pumping stations with North Terminal's battery in 6 minutes.",
+      "intent_tag": "action",
+      "extracted_at_second": 58,
+      "status": "sandboxed"
+    },
+    {
+      "card_id": "slate_c006",
+      "turn_id": 6,
+      "speaker": "Charlie",
+      "raw_utterance": "That buys us breathing room, but what about the physical water barrier? Charlie proposing we seal the pneumatic bulkhead floodgates at Tunnel Portal 2 immediately.",
+      "distilled_text": "Seal pneumatic bulkhead floodgates at Tunnel Portal 2 immediately",
+      "intent_tag": "proposal",
+      "extracted_at_second": 69,
+      "status": "proposed"
+    },
+    {
+      "card_id": "slate_c007",
+      "turn_id": 7,
+      "speaker": "Alice",
+      "raw_utterance": "Wait, let's look at the Deliberation Diff Card. If we drop the bulkhead at Portal 2 right now, it traps the secondary commuter egress route through 5th Avenue station. That creates a severe evacuation bottleneck.",
+      "distilled_text": "Check Deliberation Diff Card; dropping bulkhead at Portal 2 blocks 5th Avenue station, causing evacuation bottleneck.",
+      "intent_tag": "claim",
+      "extracted_at_second": 80,
+      "status": "sandboxed"
+    },
+    {
+      "card_id": "slate_c008",
+      "turn_id": 8,
+      "speaker": "Bob",
+      "raw_utterance": "Can we deploy deployable temporary water deflectors at street level first to buy 20 minutes, while staging transit police to divert commuters toward the elevated North Exit?",
+      "distilled_text": "Deploy temporary water deflectors at street level; stage transit police for North Exit diversion.",
+      "intent_tag": "proposal",
+      "extracted_at_second": 92,
+      "status": "sandboxed"
+    },
+    {
+      "card_id": "slate_c009",
+      "turn_id": 9,
+      "speaker": "Charlie",
+      "raw_utterance": "Yes! If we route through North Exit, that route is 4 meters above the 100-year flood line. That resolves the egress hazard.",
+      "distilled_text": "Route through North Exit avoids flood hazard.",
+      "intent_tag": "claim",
+      "extracted_at_second": 102,
+      "status": "sandboxed"
+    },
+    {
+      "card_id": "slate_c010",
+      "turn_id": 10,
+      "speaker": "Alice",
+      "raw_utterance": "Excellent. Let's merge the phased bulkhead closure protocol into the canonical tree: battery back-feed first, then North Exit evacuation diversion, then Portal 2 pneumatic seal at T-plus 25 minutes.",
+      "distilled_text": "Merge phased bulkhead closure protocol into canonical tree",
+      "intent_tag": "action",
+      "extracted_at_second": 114,
+      "status": "merged"
+    },
+    {
+      "card_id": "slate_c011",
+      "turn_id": 11,
+      "speaker": "Bob",
+      "raw_utterance": "I vote approve on the amended branch. Utilities team is already queuing the battery switchgear commands.",
+      "distilled_text": "Vote to approve amended branch; utilities team queuing battery switchgear commands.",
+      "intent_tag": "action",
+      "extracted_at_second": 123,
+      "status": "merged"
+    },
+    {
+      "card_id": "slate_c012",
+      "turn_id": 12,
+      "speaker": "Charlie",
+      "raw_utterance": "Transit bureau votes approve. Diverting crowds now via automated PA and mobile geo-fenced push alerts.",
+      "distilled_text": "Transit bureau approves diverting crowds using automated PA and mobile alerts.",
+      "intent_tag": "action",
+      "extracted_at_second": 132,
+      "status": "merged"
+    }
+  ],
+  "branch_commit_merge_trail": [
+    {
+      "event_id": "bcm_ev_001",
+      "event_type": "merge_committed",
+      "proposal_id": "pr_01_01_4f1b8a",
+      "parent_node_id": "node_0000",
+      "author": "Alice",
+      "candidate_text": "Isolate Substation Alpha-9 while rerouting critical subterranean tunnel pumps to North Terminal Battery Storage",
+      "diff_card": {
+        "has_conflict": false,
+        "conflict_reason": "No semantic collision; aligns with consensus arbor.",
+        "alignment_score": 0.92,
+        "trade_off_analysis": "The proposal suggests isolating Substation Alpha-9 and rerouting tunnel pumps to North Terminal Battery Storage. This approach involves a trade-off between ensuring the safety of critical infrastructure (power substations) and maintaining operational continuity in the metro transit system. Isolating Substation Alpha-9 could lead to localized power outages, affecting nearby areas and services. However, rerouting tunnel pumps to battery storage might help mitigate flooding risks in the tunnels while providing backup power for essential operations."
+      },
+      "consensus_voting_log": [
+        {
+          "voter": "Alice",
+          "vote": "approve",
+          "rationale": "Protects hospital grid while preserving life-critical tunnel sump pumps."
+        },
+        {
+          "voter": "Bob",
+          "vote": "approve",
+          "rationale": "2.5MW battery system can sustain tunnel drainage pumps for 3.5 hours."
+        },
+        {
+          "voter": "Charlie",
+          "vote": "approve",
+          "rationale": "Prevents catastrophic asphyxiation and drowning risk for evacuees."
+        }
+      ],
+      "consensus_outcome": "approved",
+      "merkle_transition": {
+        "pre_state_hash": "347d5cd331011311",
+        "post_state_hash": "87a74b65e5ce362e",
+        "revision_before": 1,
+        "revision_after": 2,
+        "action": "MERGE_PROPOSAL_pr_01_01_4f1b8a",
+        "affected_node_id": "node_0001"
+      }
+    },
+    {
+      "event_id": "bcm_ev_002",
+      "event_type": "branch_rejected",
+      "proposal_id": "pr_01_02_95f6f6",
+      "parent_node_id": "node_0001",
+      "author": "Charlie",
+      "candidate_text": "Immediate unconditioned pneumatic bulkhead drop at Tunnel Portal 2",
+      "diff_card": {
+        "has_conflict": true,
+        "conflict_reason": "Bulkhead drop at Portal 2 severs the primary pedestrian egress artery for 1,200 commuters before platform clearance.",
+        "alignment_score": 0.58,
+        "trade_off_analysis": "Protects subway tunnels from water ingress vs. traps civilians in subterranean concourse with no secondary exit."
+      },
+      "consensus_voting_log": [
+        {
+          "voter": "Alice",
+          "vote": "reject",
+          "rationale": "Life safety violation; cannot seal exits while civilians remain below ground."
+        },
+        {
+          "voter": "Bob",
+          "vote": "reject",
+          "rationale": "Hydraulic sensors indicate water level allows a 20-minute diversion buffer."
+        },
+        {
+          "voter": "Charlie",
+          "vote": "amend",
+          "rationale": "Agreed, defer seal until North Exit diversion is verified complete."
+        }
+      ],
+      "consensus_outcome": "rejected",
+      "merkle_transition": {
+        "pre_state_hash": "87a74b65e5ce362e",
+        "post_state_hash": "87a74b65e5ce362e",
+        "revision_before": 2,
+        "revision_after": 2,
+        "action": "REJECT_PROPOSAL_pr_01_02_95f6f6",
+        "affected_node_id": null
+      }
+    },
+    {
+      "event_id": "bcm_ev_003",
+      "event_type": "merge_committed",
+      "proposal_id": "pr_01_03_618ce3",
+      "parent_node_id": "node_0001",
+      "author": "Alice",
+      "candidate_text": "Staged Egress & Phased Floodgate Protocol: Deploy street deflectors, divert to North Concourse, seal Portal 2 at T+25 min",
+      "diff_card": {
+        "has_conflict": false,
+        "conflict_reason": "No semantic collision; aligns with consensus arbor.",
+        "alignment_score": 0.92,
+        "trade_off_analysis": "The proposal introduces a staged egress and phased floodgate protocol that complements the goal of isolating Substation Alpha-9 and rerouting pumps. It adds an additional layer of safety by diverting traffic and sealing specific portals, which could reduce the risk of flooding in critical areas. However, it also requires careful coordination to ensure that the deployment of street deflectors and the timing of portal seals do not interfere with the isolation efforts or pump rerouting."
+      },
+      "consensus_voting_log": [
+        {
+          "voter": "Alice",
+          "vote": "approve",
+          "rationale": "Comprehensive solution balancing hydrological containment and zero casualty mandate."
+        },
+        {
+          "voter": "Bob",
+          "vote": "approve",
+          "rationale": "Aligns with grid isolation timing and battery load capacity curve."
+        },
+        {
+          "voter": "Charlie",
+          "vote": "approve",
+          "rationale": "Provides sufficient transit escort window for full station clearance."
+        }
+      ],
+      "consensus_outcome": "approved",
+      "merkle_transition": {
+        "pre_state_hash": "87a74b65e5ce362e",
+        "post_state_hash": "2142eab580d2691c",
+        "revision_before": 2,
+        "revision_after": 3,
+        "action": "MERGE_PROPOSAL_pr_01_03_618ce3",
+        "affected_node_id": "node_0002"
+      }
+    },
+    {
+      "event_id": "bcm_ev_004",
+      "event_type": "merge_committed",
+      "proposal_id": "pr_01_04_9deb56",
+      "parent_node_id": "node_0002",
+      "author": "Bob",
+      "candidate_text": "Establish secondary telemetry umbilical between City SCADA and XR Command Arbor for real-time sensor node overlays",
+      "diff_card": {
+        "has_conflict": false,
+        "conflict_reason": "No semantic collision; aligns with consensus arbor.",
+        "alignment_score": 0.92,
+        "trade_off_analysis": "The proposal by Bob establishes a secondary telemetry umbilical between City SCADA and XR Command Arbor for real-time sensor node overlays. This could enhance the monitoring and control capabilities of the existing flood mitigation efforts, providing more precise data to inform decision-making processes. However, it may require additional resources such as personnel, infrastructure, and time to set up and maintain the new telemetry system. There is a potential trade-off between enhancing situational awareness and diverting resources away from immediate physical interventions like deploying street deflectors or sealing portals."
+      },
+      "consensus_voting_log": [
+        {
+          "voter": "Alice",
+          "vote": "approve",
+          "rationale": "Provides single pane of glass situational awareness across agencies."
+        },
+        {
+          "voter": "Bob",
+          "vote": "approve",
+          "rationale": "Zero latency MQTT broker already streaming hydrological sensor readings."
+        },
+        {
+          "voter": "Charlie",
+          "vote": "approve",
+          "rationale": "Enables instant spatial verification of flood advance against transit lines."
+        }
+      ],
+      "consensus_outcome": "approved",
+      "merkle_transition": {
+        "pre_state_hash": "2142eab580d2691c",
+        "post_state_hash": "36dac19f4d8a9dca",
+        "revision_before": 3,
+        "revision_after": 4,
+        "action": "MERGE_PROPOSAL_pr_01_04_9deb56",
+        "affected_node_id": "node_0003"
+      }
+    }
+  ],
+  "final_synthesis": {
+    "canonical_dag_state": {
+      "meeting_id": "meeting_01_smart_city_disaster",
+      "revision": 4,
+      "state_hash": "36dac19f4d8a9dca",
+      "root_id": "node_0000",
+      "nodes": {
+        "node_0000": {
+          "id": "node_0000",
+          "text": "Formulate an immediate 48-hour municipal mitigation strategy for Category 4 flash floods threatening downtown power substations and the metro transit tunnel system.",
+          "node_type": "goal",
+          "author": "Chairperson",
+          "parent_id": null,
+          "created_at": 1789518307.096356,
+          "children_ids": [
+            "node_0001"
+          ],
+          "metadata": {},
+          "content_hash": "2e8d044e846618ef"
+        },
+        "node_0001": {
+          "id": "node_0001",
+          "text": "Isolate Substation Alpha-9 while rerouting critical subterranean tunnel pumps to North Terminal Battery Storage",
+          "node_type": "claim",
+          "author": "Alice",
+          "parent_id": "node_0000",
+          "created_at": 1789518351.3039913,
+          "children_ids": [
+            "node_0002"
+          ],
+          "metadata": {
+            "proposal_id": "pr_01_01_4f1b8a",
+            "alignment_score": "0.92"
+          },
+          "content_hash": "81573ff623059354"
+        },
+        "node_0002": {
+          "id": "node_0002",
+          "text": "Staged Egress & Phased Floodgate Protocol: Deploy street deflectors, divert to North Concourse, seal Portal 2 at T+25 min",
+          "node_type": "claim",
+          "author": "Alice",
+          "parent_id": "node_0001",
+          "created_at": 1789518362.9365578,
+          "children_ids": [
+            "node_0003"
+          ],
+          "metadata": {
+            "proposal_id": "pr_01_03_618ce3",
+            "alignment_score": "0.92"
+          },
+          "content_hash": "5584170f8ef8f263"
+        },
+        "node_0003": {
+          "id": "node_0003",
+          "text": "Establish secondary telemetry umbilical between City SCADA and XR Command Arbor for real-time sensor node overlays",
+          "node_type": "claim",
+          "author": "Bob",
+          "parent_id": "node_0002",
+          "created_at": 1789518368.879359,
+          "children_ids": [],
+          "metadata": {
+            "proposal_id": "pr_01_04_9deb56",
+            "alignment_score": "0.92"
+          },
+          "content_hash": "35df8ac1af85b08f"
+        }
+      }
+    },
+    "resolved_action_items": [
+      {
+        "item_id": "act_001",
+        "title": "Execute Battery Back-feed",
+        "description": "Trigger switchgear transfer to North Terminal BESS for subterranean pumps.",
+        "assignee": "Bob",
+        "priority": "high",
+        "deadline": "T+00:06:00",
+        "source_node_id": "node_0001"
+      },
+      {
+        "item_id": "act_002",
+        "title": "Broadcast North Exit Egress Alerts",
+        "description": "Push geo-fenced emergency notifications and activate directional strobe signs at Central Station.",
+        "assignee": "Charlie",
+        "priority": "high",
+        "deadline": "T+00:10:00",
+        "source_node_id": "node_0002"
+      },
+      {
+        "item_id": "act_003",
+        "title": "Pneumatic Bulkhead Seal Verification",
+        "description": "Confirm 100% platform clearance via thermal cameras and seal Portal 2.",
+        "assignee": "Alice",
+        "priority": "high",
+        "deadline": "T+00:25:00",
+        "source_node_id": "node_0002"
+      }
+    ],
+    "topological_recall_alignment": {
+      "overall_alignment_score": 0.942,
+      "grounding_efficiency_gain_percent": 41.6,
+      "participant_scores": {
+        "Alice": {
+          "recalled_nodes_count": 4,
+          "total_nodes_count": 4,
+          "graph_f1_score": 0.96,
+          "cognitive_load_nasa_tlx": 22.4,
+          "latency_to_ground_seconds": 1.4
+        },
+        "Bob": {
+          "recalled_nodes_count": 4,
+          "total_nodes_count": 4,
+          "graph_f1_score": 0.94,
+          "cognitive_load_nasa_tlx": 25.1,
+          "latency_to_ground_seconds": 1.6
+        },
+        "Charlie": {
+          "recalled_nodes_count": 4,
+          "total_nodes_count": 4,
+          "graph_f1_score": 0.93,
+          "cognitive_load_nasa_tlx": 23.8,
+          "latency_to_ground_seconds": 1.8
+        }
+      },
+      "structural_density": 0.81,
+      "recalled_critical_path_pct": 100.0
+    }
+  }
+}
