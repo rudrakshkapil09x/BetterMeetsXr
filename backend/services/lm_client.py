@@ -9,6 +9,7 @@ Optimized for low latency, zero overhead, and strict output validation.
 
 from __future__ import annotations
 import json
+import re
 import logging
 from typing import Dict, List, Optional
 import requests
@@ -77,21 +78,37 @@ class LMStudioClient:
             "and 'intent' ('claim', 'question', 'action', 'evidence', or 'proposal'). Return ONLY raw JSON."
         )
         prompt = f"Speaker: {speaker}\nUtterance: {raw_transcript}"
-        raw_output = self.generate_completion(prompt, system_prompt=system_prompt, temperature=0.1, max_tokens=100)
-
         valid_intents = {"claim", "question", "action", "evidence", "proposal"}
-        clean_json = raw_output.replace("```json", "").replace("```", "").strip()
+
         try:
+            raw_output = self.generate_completion(prompt, system_prompt=system_prompt, temperature=0.1, max_tokens=100)
+            clean_json = raw_output.replace("```json", "").replace("```", "").strip()
+            json_match = re.search(r"\{.*?\}", clean_json, re.DOTALL)
+            if json_match:
+                clean_json = json_match.group(0)
+
             parsed = json.loads(clean_json)
             raw_intent = str(parsed.get("intent", "claim")).strip().lower()
             intent = raw_intent if raw_intent in valid_intents else "claim"
-            distilled = str(parsed.get("distilled_text", raw_transcript.strip())).strip()
-            return {
-                "distilled_text": distilled if distilled else raw_transcript.strip(),
-                "intent": intent
-            }
+            distilled = str(parsed.get("distilled_text", "")).strip()
+            if distilled:
+                return {
+                    "distilled_text": distilled,
+                    "intent": intent
+                }
         except Exception:
-            return {
-                "distilled_text": raw_transcript.strip(),
-                "intent": "claim"
-            }
+            pass
+
+        # Fallback to local heuristic cleanup if JSON parsing failed or distilled text was empty
+        text_clean = re.sub(r"\b(um|uh|you know|like|so basically|alright team|wait)\b[,;\s]*", " ", raw_transcript, flags=re.IGNORECASE)
+        text_clean = re.sub(r"^[^\w]+", "", text_clean)
+        text_clean = re.sub(r"\s+", " ", text_clean).strip()
+        words = text_clean.split()
+        fallback_distilled = " ".join(words[:16]) if len(words) > 16 else text_clean
+        if fallback_distilled and not fallback_distilled.endswith((".", "!", "?")):
+            fallback_distilled = fallback_distilled.rstrip(",;:- ") + "."
+
+        return {
+            "distilled_text": fallback_distilled if fallback_distilled else raw_transcript.strip(),
+            "intent": "claim"
+        }

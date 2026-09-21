@@ -26,6 +26,7 @@ import json
 import time
 import uuid
 import re
+import shutil
 from datetime import datetime
 from pathlib import Path
 from typing import List, Dict, Any, Optional
@@ -43,6 +44,24 @@ from backend.services.deliberation_engine import DeliberationEngine
 DATA_DIR = WORKSPACE_ROOT / "data" / "simulated_meetings"
 AUDIT_LOG_FILE = WORKSPACE_ROOT / "AUDIT_LOG.md"
 STATE_FILE = WORKSPACE_ROOT / "scripts" / "review_state.json"
+BRAIN_DIR = Path(r"C:\Users\chait\.gemini\antigravity\brain\2cc9d197-cad8-4ac4-8540-7b649e2757d9")
+
+
+def sync_artifacts_to_brain() -> List[str]:
+    """
+    Synchronizes all meeting JSON datasets, executive summary markdown reports,
+    and manifest.json to the brain artifact registry if accessible.
+    """
+    synced = []
+    if not BRAIN_DIR.exists():
+        return synced
+
+    for f in DATA_DIR.glob("*.*"):
+        if f.suffix in [".json", ".md"] and not f.name.endswith(".metadata.json"):
+            target = BRAIN_DIR / f.name
+            shutil.copy2(f, target)
+            synced.append(f.name)
+    return synced
 
 
 # ==============================================================================
@@ -457,19 +476,45 @@ SCENARIOS = [
 def clean_utterance_for_slate(raw_text: str) -> tuple[str, str]:
     """
     Deterministic NLP fallback for slate card disfluency distillation and intent tagging.
+    Removes conversational fillers, disfluencies, and meta-dialogue framing without tearing dependent clauses.
     """
-    text = re.sub(r"\b(um|uh|you know|like|so basically|alright team|looking at the telemetry|wait|so we have|okay look at the)\b", "", raw_text, flags=re.IGNORECASE)
+    # 1. Filter conversational greetings, exclamations, and fillers
+    interjection_pattern = r"^(bob!|yes!|good morning\.?|excellent\.?|understood\.?|hmm\.?|whoa,?\s*(absolutely not\s*\w*)?\.?|alright team,?\s*|welcome everyone\.?)\s*"
+    text = re.sub(interjection_pattern, "", raw_text, flags=re.IGNORECASE)
+
+    filler_pattern = r"\b(um|uh|you know|like|so basically|alright team|looking at the telemetry|wait|so we have|okay look at the)\b[,;\s]*"
+    text = re.sub(filler_pattern, " ", text, flags=re.IGNORECASE)
+    text = re.sub(r"^[^\w]+", "", text)
+    text = re.sub(r"\s+([,;.!?])", r"\1", text)
     text = re.sub(r"\s+", " ", text).strip()
-    words = text.split()
-    distilled = " ".join(words[:14]) if len(words) > 14 else text
+    if text:
+        text = text[0].upper() + text[1:]
+
+    # Sentence-aware packaging: find first substantial sentence
+    sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", text) if s.strip()]
+    candidate = ""
+    for s in sentences:
+        if len(s.split()) >= 4:
+            candidate = s
+            break
+    if not candidate and sentences:
+        candidate = " ".join(sentences[:2])
+
+    if candidate and len(candidate.split()) <= 18:
+        distilled = candidate
+    else:
+        words = text.split()
+        distilled = " ".join(words[:16])
+        if not distilled.endswith((".", "!", "?")) and distilled:
+            distilled = distilled.rstrip(",;:- ") + "."
 
     # Intent tagging heuristics
     lower = raw_text.lower()
-    if "?" in raw_text or any(k in lower for k in ["what about", "can we", "could we"]):
+    if "?" in raw_text or any(k in lower for k in ["what about", "can we", "could we", "should we"]):
         intent = "question"
-    elif any(k in lower for k in ["proposing", "propose", "branch", "protocol", "architecture", "plan"]):
+    elif any(k in lower for k in ["proposing", "propose", "proposal", "branch", "protocol", "architecture", "plan"]):
         intent = "proposal"
-    elif any(k in lower for k in ["divert", "seal", "cut", "deploy", "implement", "route", "execute", "trigger"]):
+    elif any(k in lower for k in ["divert", "seal", "cut", "deploy", "implement", "route", "execute", "trigger", "vote", "approve"]):
         intent = "action"
     elif any(k in lower for k in ["sensor", "telemetry", "water level", "latency", "frames per second", "study", "metrics"]):
         intent = "evidence"
@@ -903,6 +948,11 @@ def run_all_simulations(force: bool = True) -> List[dict]:
         json.dump(index_manifest, f, indent=2)
     print(f"[+] Saved Simulation Manifest to: {manifest_path}")
 
+    # Synchronize to Brain Artifact Registry
+    synced_files = sync_artifacts_to_brain()
+    if synced_files:
+        print(f"[+] Synchronized {len(synced_files)} artifacts to Brain registry: {BRAIN_DIR}")
+
     # Append to Audit Log
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     audit_entry = f"""### Scheduled Meeting Simulation Pipeline Execution ({now_str})
@@ -912,6 +962,7 @@ def run_all_simulations(force: bool = True) -> List[dict]:
   2. `meeting_02_enterprise_cloud_migration`: Core Banking Zero-Trust Cloud SLA (Merkle Root: `{generated_meetings[1]['final_synthesis']['canonical_dag_state']['state_hash']}`)
   3. `meeting_03_healthcare_robotics`: Surgical Assistant Fail-Safe Tele-Operation (Merkle Root: `{generated_meetings[2]['final_synthesis']['canonical_dag_state']['state_hash']}`)
 - **Artifacts Created**: All 3 `.json` datasets and 3 `_summary.md` executive reports validated against Pydantic schema and saved in `data/simulated_meetings/`.
+- **Brain Registry**: Synchronized {len(synced_files)} artifacts to `{BRAIN_DIR}`.
 - **Status**: 100% VALIDATED & READY."""
 
     with open(AUDIT_LOG_FILE, "a", encoding="utf-8") as f:
@@ -923,8 +974,8 @@ def run_all_simulations(force: bool = True) -> List[dict]:
 def validate_and_finalize_sample_artifacts(now: Optional[datetime] = None, log_audit: bool = True) -> dict:
     """
     Validates all 3 meeting JSON datasets and markdown summaries against strict Pydantic schemas,
-    verifies manifest completeness, and updates review_state.json and AUDIT_LOG.md
-    for post-11:00 AM artifact finalization.
+    verifies manifest completeness, synchronizes with the brain artifact registry, and updates
+    review_state.json and AUDIT_LOG.md for post-11:00 AM artifact finalization.
     """
     now_dt = now or datetime.now()
     now_str = now_dt.strftime("%Y-%m-%d %H:%M:%S")
@@ -965,12 +1016,17 @@ def validate_and_finalize_sample_artifacts(now: Optional[datetime] = None, log_a
     manifest_path = DATA_DIR / "manifest.json"
     has_manifest = manifest_path.exists()
 
+    # Synchronize to Brain Artifact Registry
+    synced_brain_artifacts = sync_artifacts_to_brain()
+
     finalization_record = {
         "status": "FINALIZED_AND_VALIDATED" if not validation_errors and len(validated_artifacts) == 3 else "PARTIAL_VALIDATION_ERROR",
         "validated_after_11am": True,
         "timestamp": now_str,
         "count": len(validated_artifacts),
         "has_manifest": has_manifest,
+        "brain_synced": bool(synced_brain_artifacts),
+        "synced_brain_files": synced_brain_artifacts,
         "artifacts": validated_artifacts,
         "errors": validation_errors
     }
@@ -1001,7 +1057,8 @@ def validate_and_finalize_sample_artifacts(now: Optional[datetime] = None, log_a
   1. `meeting_01_smart_city_disaster.json` & summary (Merkle Root: `{validated_artifacts[0]['merkle_root'] if len(validated_artifacts) > 0 else 'N/A'}`)
   2. `meeting_02_enterprise_cloud_migration.json` & summary (Merkle Root: `{validated_artifacts[1]['merkle_root'] if len(validated_artifacts) > 1 else 'N/A'}`)
   3. `meeting_03_healthcare_robotics.json` & summary (Merkle Root: `{validated_artifacts[2]['merkle_root'] if len(validated_artifacts) > 2 else 'N/A'}`)
-- **Manifest**: `{manifest_path}` verified."""
+- **Manifest**: `{manifest_path}` verified.
+- **Brain Artifact Registry**: Synchronized {len(synced_brain_artifacts)} artifacts to `{BRAIN_DIR}`."""
 
             with open(AUDIT_LOG_FILE, "a", encoding="utf-8") as f:
                 f.write(f"\n\n{audit_entry}\n")

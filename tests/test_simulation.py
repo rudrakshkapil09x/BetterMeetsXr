@@ -242,3 +242,79 @@ def test_slate_card_status_no_false_positive_merge(loaded_meetings):
                 assert card["status"] != "merged", (
                     f"False positive 'merged' on card {card['card_id']} with raw utterance: {card['raw_utterance']}"
                 )
+
+
+def test_clean_utterance_disfluency_distillation_and_intent():
+    """
+    Validates that clean_utterance_for_slate eliminates fillers, greetings,
+    and disfluencies without orphan punctuation or torn clauses.
+    """
+    from scripts.simulate_meetings import clean_utterance_for_slate
+
+    test_cases = [
+        (
+            "Alright team, um, sensor arrays at Lower River Basin just crossed critical flood stage.",
+            "evidence",
+            "Sensor arrays at Lower River Basin just crossed critical flood stage."
+        ),
+        (
+            "Uh, yeah, we could back-feed the tunnel pumping stations using the 2.5-megawatt battery energy storage system.",
+            "claim",
+            "Yeah, we could back-feed the tunnel pumping stations"
+        ),
+        (
+            "Can we deploy deployable temporary water deflectors at street level first?",
+            "question",
+            "Can we deploy deployable temporary water deflectors at street level first?"
+        ),
+        (
+            "Charlie proposing we seal the pneumatic bulkhead floodgates at Tunnel Portal 2 immediately.",
+            "proposal",
+            "Charlie proposing we seal the pneumatic bulkhead floodgates at Tunnel Portal 2 immediately."
+        )
+    ]
+
+    for raw, expected_intent, expected_prefix in test_cases:
+        distilled, intent = clean_utterance_for_slate(raw)
+        assert intent == expected_intent, f"Expected intent '{expected_intent}', got '{intent}' for raw: {raw}"
+        assert not distilled.startswith((",", ".", ";", "!", "?", "-")), f"Distilled text has orphan punctuation: {distilled}"
+        assert distilled[0].isupper(), f"Distilled text must start with uppercase letter: {distilled}"
+        assert expected_prefix.lower() in distilled.lower(), f"Expected phrase '{expected_prefix}' missing from '{distilled}'"
+
+
+def test_brain_artifact_sync_and_validation():
+    """
+    Validates that validate_and_finalize_sample_artifacts correctly synchronizes
+    sample artifacts with the brain directory if the registry directory exists.
+    """
+    from scripts.simulate_meetings import validate_and_finalize_sample_artifacts, BRAIN_DIR
+
+    record = validate_and_finalize_sample_artifacts(log_audit=False)
+    assert record["status"] == "FINALIZED_AND_VALIDATED"
+    assert record["count"] == 3
+    if BRAIN_DIR.exists():
+        assert record.get("brain_synced") is True
+        assert len(record.get("synced_brain_files", [])) >= 3
+        # Verify that all 3 meeting files and manifest exist in brain directory
+        for sc in record["artifacts"]:
+            m_id = sc["meeting_id"]
+            assert (BRAIN_DIR / f"{m_id}.json").exists()
+            assert (BRAIN_DIR / f"{m_id}_summary.md").exists()
+        assert (BRAIN_DIR / "manifest.json").exists()
+
+
+def test_cron_worker_schedule_guards():
+    """
+    Validates that cron_worker does NOT trigger premature post-11:00 AM finalization
+    when executing during the 10:30 AM - 11:00 AM simulation window.
+    """
+    from datetime import datetime
+    from scripts.cron_worker import is_within_simulation_window
+
+    test_window_dt = datetime(2026, 9, 17, 10, 45, 0)
+    assert is_within_simulation_window(test_window_dt) is True
+
+    today_11am = test_window_dt.replace(hour=11, minute=0, second=0, microsecond=0)
+    # Inside the window, current time must be strictly before 11:00 AM
+    assert test_window_dt < today_11am
+

@@ -213,11 +213,9 @@ def finalize_pipeline_and_artifacts(state: dict, now: Optional[datetime] = None)
 def execute_backend_milestone(round_idx: int, state: dict):
     now = datetime.now()
     now_str = now.strftime("%Y-%m-%d %H:%M:%S")
-    # Check if past 11:00 AM
-    target_dt = datetime.fromisoformat(state.get("end_time_target", "2026-09-16T11:00:00+05:30"))
-    if target_dt.tzinfo is not None:
-        target_dt = target_dt.replace(tzinfo=None)
-    if now >= target_dt:
+    # Check if past 11:00 AM today
+    today_11am = now.replace(hour=11, minute=0, second=0, microsecond=0)
+    if now >= today_11am:
         finalize_pipeline_and_artifacts(state, now)
         return
 
@@ -328,17 +326,20 @@ def main():
         finalize_pipeline_and_artifacts(state, now)
         return
 
-    # Check dedicated simulation window (10:30 AM - 11:00 AM) or explicit CLI trigger
-    if is_within_simulation_window(now) or "--simulate" in sys.argv:
+    # Check dedicated simulation window (10:30 AM - 11:00 AM)
+    if is_within_simulation_window(now):
         execute_scheduled_simulation(state)
-        if "--simulate" in sys.argv and "--all" not in sys.argv:
+        return
+
+    # Explicit CLI simulation trigger
+    if "--simulate" in sys.argv:
+        execute_scheduled_simulation(state)
+        if "--all" not in sys.argv:
             return
 
-    # Check if past target end time (11:00 AM)
-    target_dt = datetime.fromisoformat(state.get("end_time_target", "2026-09-16T11:00:00+05:30"))
-    if target_dt.tzinfo is not None:
-        target_dt = target_dt.replace(tzinfo=None)
-    if now >= target_dt:
+    # Check if past target end time (11:00 AM today)
+    today_11am = now.replace(hour=11, minute=0, second=0, microsecond=0)
+    if now >= today_11am:
         finalize_pipeline_and_artifacts(state, now)
         return
 
