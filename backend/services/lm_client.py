@@ -96,19 +96,9 @@ class LMStudioClient:
                     "distilled_text": distilled,
                     "intent": intent
                 }
-        except Exception:
-            pass
+        except Exception as e:
+            logger.error(f"LM Studio generation failed: {e}")
+            raise RuntimeError(f"Direct LM Studio speech processing failed: {e}. Fallbacks are disabled.")
 
-        # Fallback to local heuristic cleanup if JSON parsing failed or distilled text was empty
-        text_clean = re.sub(r"\b(um|uh|you know|like|so basically|alright team|wait)\b[,;\s]*", " ", raw_transcript, flags=re.IGNORECASE)
-        text_clean = re.sub(r"^[^\w]+", "", text_clean)
-        text_clean = re.sub(r"\s+", " ", text_clean).strip()
-        words = text_clean.split()
-        fallback_distilled = " ".join(words[:16]) if len(words) > 16 else text_clean
-        if fallback_distilled and not fallback_distilled.endswith((".", "!", "?")):
-            fallback_distilled = fallback_distilled.rstrip(",;:- ") + "."
+        raise RuntimeError("LM Studio returned empty or invalid speech distillation. Fallbacks are disabled.")
 
-        return {
-            "distilled_text": fallback_distilled if fallback_distilled else raw_transcript.strip(),
-            "intent": "claim"
-        }

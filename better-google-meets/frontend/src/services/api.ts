@@ -1,32 +1,66 @@
 import { TreeSnapshot, SlateCard, ProposalDiff, EngineStatus, NodeType } from '../types/tree';
 
-const API_BASE = '/api';
+const API_BASE = (typeof window !== 'undefined' && window.location.protocol === 'chrome-extension:')
+  ? 'http://127.0.0.1:8000'
+  : '/api';
+
+export function getActiveMeetingId(): string {
+  if (typeof window !== 'undefined') {
+    const params = new URLSearchParams(window.location.search);
+    return params.get('meeting_id') || 'meet-session-01';
+  }
+  return 'meet-session-01';
+}
 
 export async function getHealth(): Promise<any> {
-  const res = await fetch(`${API_BASE}/health`);
+  const res = await fetch(`${API_BASE}/health?meeting_id=${encodeURIComponent(getActiveMeetingId())}`);
   return res.json();
 }
 
 export async function getTree(): Promise<TreeSnapshot> {
-  const res = await fetch(`${API_BASE}/tree`);
+  const res = await fetch(`${API_BASE}/tree?meeting_id=${encodeURIComponent(getActiveMeetingId())}`);
   if (!res.ok) throw new Error(`Fetch tree failed: ${res.statusText}`);
   return res.json();
 }
 
 export async function resetTree(goalTitle: string = 'Municipal Climate Resilience Strategy'): Promise<TreeSnapshot> {
   const encoded = encodeURIComponent(goalTitle);
-  const res = await fetch(`${API_BASE}/tree/reset?goal_title=${encoded}`, { method: 'POST' });
+  const res = await fetch(`${API_BASE}/tree/reset?goal_title=${encoded}&meeting_id=${encodeURIComponent(getActiveMeetingId())}`, { method: 'POST' });
   if (!res.ok) throw new Error(`Reset tree failed: ${res.statusText}`);
   return res.json();
 }
 
-export async function ingestSpeech(speaker: string, transcript: string): Promise<{ speaker: string; raw: string; card: { distilled_text: string; intent: NodeType; provider_used: string } }> {
+type IngestResponse =
+  | { status: 'ignored_noise'; reason: string; speaker: string; raw: string }
+  | {
+      status?: never;
+      speaker: string;
+      raw: string;
+      card_id?: string;
+      extracted_query?: string;
+      card: {
+        distilled_text: string;
+        intent: NodeType;
+        provider_used: string;
+        extracted_query?: string;
+        is_noise?: boolean;
+        reason?: string;
+      };
+    };
+
+export async function ingestSpeech(speaker: string, transcript: string): Promise<IngestResponse> {
   const res = await fetch(`${API_BASE}/slate/ingest`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ speaker, transcript })
+    body: JSON.stringify({ speaker, transcript, meeting_id: getActiveMeetingId() })
   });
   if (!res.ok) throw new Error(`Ingest speech failed: ${res.statusText}`);
+  return res.json();
+}
+
+export async function getSpeechSlates(): Promise<{ meeting_id: string; cards: SlateCard[] }> {
+  const res = await fetch(`${API_BASE}/slate?meeting_id=${encodeURIComponent(getActiveMeetingId())}`);
+  if (!res.ok) throw new Error(`Fetch speech slates failed: ${res.statusText}`);
   return res.json();
 }
 
@@ -53,7 +87,8 @@ export async function analyzeProposal(
       parent_id: parentId,
       candidate_text: candidateText,
       author,
-      node_type: nodeType
+      node_type: nodeType,
+      meeting_id: getActiveMeetingId()
     })
   });
   if (!res.ok) throw new Error(`Analyze proposal failed: ${res.statusText}`);
@@ -77,7 +112,8 @@ export async function mergeProposal(
       candidate_text: candidateText,
       author,
       node_type: nodeType,
-      additional_parents: additionalParents
+      additional_parents: additionalParents,
+      meeting_id: getActiveMeetingId()
     })
   });
   if (!res.ok) throw new Error(`Merge proposal failed: ${res.statusText}`);
@@ -103,5 +139,35 @@ export async function updateEngineConfig(
       lm_studio_url: lmStudioUrl
     })
   });
+  return res.json();
+}
+
+export async function extractBatchIdeas(forceAll: boolean = false): Promise<{ status: string; extracted_count: number; ideas: SlateCard[] }> {
+  const res = await fetch(`${API_BASE}/session/extract-ideas?meeting_id=${encodeURIComponent(getActiveMeetingId())}&force_all=${forceAll}`, {
+    method: 'POST'
+  });
+  if (!res.ok) throw new Error(`Extract batch ideas failed: ${res.statusText}`);
+  return res.json();
+}
+
+export async function getTranscripts(): Promise<{ meeting_id: string; total: number; transcripts: Array<{ id: number; speaker: string; text: string; created_at: number; extracted: boolean }> }> {
+  const res = await fetch(`${API_BASE}/transcripts?meeting_id=${encodeURIComponent(getActiveMeetingId())}`);
+  if (!res.ok) throw new Error(`Fetch transcripts failed: ${res.statusText}`);
+  return res.json();
+}
+
+export async function setMeetingAgenda(agenda: string): Promise<any> {
+  const res = await fetch(`${API_BASE}/tree/agenda`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      agenda,
+      meeting_id: getActiveMeetingId(),
+      author: 'Chair'
+    })
+  });
+  if (!res.ok) {
+    return resetTree(agenda);
+  }
   return res.json();
 }

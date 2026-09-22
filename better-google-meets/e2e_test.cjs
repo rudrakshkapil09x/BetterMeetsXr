@@ -26,11 +26,17 @@ async function runE2ETest() {
     console.log(`Page title: "${title}"`);
     results.steps.push({ step: 1, name: 'Navigate', status: 'PASS', title });
 
+    // Clean session state
+    await page.evaluate(async () => {
+      await fetch('http://localhost:8000/tree/reset?goal_title=Deliberation%20Objective&meeting_id=meet-session-01', { method: 'POST' });
+    });
+    await page.waitForTimeout(600);
+
     // Step 2: Verify Initial Layout
     console.log('[Step 2] Verifying Layout Elements...');
-    await page.waitForSelector('text=BetterGoogleMeets', { timeout: 5000 });
-    await page.waitForSelector('text=Personal Slate', { timeout: 5000 });
-    await page.waitForSelector('text=Canonical Deliberation Arbor', { timeout: 5000 });
+    await page.waitForSelector('text=BetterMeets', { timeout: 5000 });
+    await page.waitForSelector('text=Slate', { timeout: 5000 });
+    await page.waitForSelector('text=Arbor', { timeout: 5000 });
     
     const initialShot = path.join(ARTIFACT_DIR, 'better_meets_initial_dashboard.png');
     await page.screenshot({ path: initialShot, fullPage: true });
@@ -40,7 +46,7 @@ async function runE2ETest() {
 
     // Step 3: Type and Ingest New Thought
     console.log('[Step 3] Ingesting New Thought...');
-    const textarea = await page.waitForSelector('textarea[placeholder*="Type a thought"]');
+    const textarea = await page.waitForSelector('textarea[placeholder*="Type or speak"]');
     await textarea.fill('Deploy regional Redis clusters to guarantee sub-15ms SLA');
     
     // Click send button
@@ -51,7 +57,7 @@ async function runE2ETest() {
     await page.waitForTimeout(1500);
     const cardText = await page.waitForSelector('text=Deploy regional Redis clusters', { timeout: 5000 });
     results.steps.push({ step: 3, name: 'Speech/Thought Ingestion', status: 'PASS', cardVerified: true });
-    console.log('[Step 3] Card spawned on Personal Slate successfully.');
+    console.log('[Step 3] Card spawned on Slate successfully.');
 
     // Step 4: Test Texterial Knead Transformation
     console.log('[Step 4] Testing Texterial Knead Transform...');
@@ -63,13 +69,13 @@ async function runE2ETest() {
 
     // Step 5: Stage Card to Arbor (Create Candidate Ghost Sprout)
     console.log('[Step 5] Staging Card to Arbor...');
-    const stageBtn = await page.waitForSelector('button:has-text("Stage to Arbor")');
+    const stageBtn = await page.waitForSelector('button:has-text("Stage")');
     await stageBtn.click();
     
     // Wait for Ghost Sprout to appear on Main Stage
     await page.waitForTimeout(2000);
-    await page.waitForSelector('text=Active Candidate Ghost Sprouts', { timeout: 5000 });
-    await page.waitForSelector('text=Deliberation Diff & Trade-Off Analysis', { timeout: 5000 });
+    await page.waitForSelector('text=Proposals', { timeout: 5000 });
+    await page.waitForSelector('text=Match', { timeout: 5000 });
     
     const ghostShot = path.join(ARTIFACT_DIR, 'better_meets_ghost_sprout.png');
     await page.screenshot({ path: ghostShot, fullPage: true });
@@ -79,23 +85,22 @@ async function runE2ETest() {
 
     // Step 6: Consensus Voting across multiple peers
     console.log('[Step 6] Casting Consensus Votes with Peer Speakers...');
-    // Switch speaker to Alice
     const speakerSelect = await page.waitForSelector('select');
-    await speakerSelect.selectOption('Alice');
-    await page.waitForTimeout(500);
 
-    const voteAliceBtn = await page.waitForSelector('button:has-text("Approve as Alice")');
-    await voteAliceBtn.click();
-    console.log('[Step 6] Alice approved proposal. Consensus: 2/3');
+    // Peer 1: Bob
+    await speakerSelect.selectOption('Bob');
+    await page.waitForTimeout(600);
+    const voteBobBtn = await page.waitForSelector('button:has-text("Approve")', { timeout: 5000 });
+    await voteBobBtn.click();
+    console.log('[Step 6] Bob approved proposal.');
     await page.waitForTimeout(1000);
 
-    // Switch speaker to Bob for deciding vote
-    await speakerSelect.selectOption('Bob');
-    await page.waitForTimeout(500);
-
-    const voteBobBtn = await page.waitForSelector('button:has-text("Approve as Bob")');
-    await voteBobBtn.click();
-    console.log('[Step 6] Bob approved proposal. Consensus: 3/3 reached!');
+    // Peer 2: Charlie
+    await speakerSelect.selectOption('Charlie');
+    await page.waitForTimeout(600);
+    const voteCharlieBtn = await page.waitForSelector('button:has-text("Approve")', { timeout: 5000 });
+    await voteCharlieBtn.click();
+    console.log('[Step 6] Charlie approved proposal.');
     await page.waitForTimeout(2000);
 
     // Verify node solidified into canonical tree
@@ -106,18 +111,19 @@ async function runE2ETest() {
     results.steps.push({ step: 6, name: 'Consensus Achieved & Node Solidified', status: 'PASS', screenshot: solidifiedShot });
     console.log(`[Step 6] Node successfully committed to Merkle DAG! Screenshot: ${solidifiedShot}`);
 
-    // Step 7: Open Settings Modal (Dual-Engine Configuration)
-    console.log('[Step 7] Opening Dual-Engine Settings Modal...');
-    const settingsBtn = await page.waitForSelector('button[title="Configure LLM Engines"]');
+
+    // Step 7: Open Settings Modal
+    console.log('[Step 7] Opening Settings Modal...');
+    const settingsBtn = await page.waitForSelector('button[title="Settings"]');
     await settingsBtn.click();
     await page.waitForTimeout(800);
-    await page.waitForSelector('text=Dual-Engine LLM Settings', { timeout: 5000 });
-    await page.waitForSelector('text=Active Inference Strategy', { timeout: 5000 });
+    await page.waitForSelector('text=LLM Settings', { timeout: 5000 });
+    await page.waitForSelector('text=Engine', { timeout: 5000 });
     
     const settingsShot = path.join(ARTIFACT_DIR, 'better_meets_settings_modal.png');
     await page.screenshot({ path: settingsShot, fullPage: true });
     results.screenshots.push(settingsShot);
-    results.steps.push({ step: 7, name: 'Dual-Engine Settings Modal Verified', status: 'PASS', screenshot: settingsShot });
+    results.steps.push({ step: 7, name: 'Settings Modal Verified', status: 'PASS', screenshot: settingsShot });
     console.log(`Screenshot saved: ${settingsShot}`);
 
     // Step 8: Close Modal & Verify Provenance Bar

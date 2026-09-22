@@ -9,7 +9,8 @@ import {
   Layers, 
   Scale, 
   Sparkles,
-  ChevronRight
+  ChevronRight,
+  Target
 } from 'lucide-react';
 
 interface MainStageProps {
@@ -19,6 +20,7 @@ interface MainStageProps {
   onSelectParent: (id: string) => void;
   onVote: (proposalId: string, voterName: string) => void;
   onResetMeeting: (goalTitle: string) => void;
+  onOpenAgenda?: () => void;
   currentVoter: string;
 }
 
@@ -29,12 +31,13 @@ export const MainStage: React.FC<MainStageProps> = ({
   onSelectParent,
   onVote,
   onResetMeeting,
+  onOpenAgenda,
   currentVoter
 }) => {
   if (!tree) {
     return (
       <div className="flex-1 flex items-center justify-center bg-obsidian-950 text-slate-500 text-sm">
-        Initializing Canonical Merkle Arbor...
+        Loading...
       </div>
     );
   }
@@ -53,47 +56,80 @@ export const MainStage: React.FC<MainStageProps> = ({
     }
   };
 
+  const rootNode = tree.nodes[tree.root_id || 'node_0000'];
+
   return (
-    <div className="flex-1 flex flex-col h-full bg-obsidian-950 p-6 overflow-y-auto select-none">
+    <div className="flex-1 flex flex-col h-full bg-obsidian-950 p-4 md:p-6 overflow-y-auto select-none">
       {/* Stage Header */}
-      <div className="flex items-center justify-between pb-4 border-b border-obsidian-800/80 mb-6">
-        <div>
-          <div className="flex items-center gap-2">
-            <h1 className="text-base font-bold text-slate-100 flex items-center gap-2">
-              <GitBranch className="w-5 h-5 text-amber-400" />
-              Canonical Deliberation Arbor
-            </h1>
-            <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-obsidian-800 text-slate-400 border border-obsidian-700">
-              Rev #{tree.revision}
-            </span>
-          </div>
-          <p className="text-xs text-slate-400 mt-0.5">
-            Shared Merkle DAG with Branch-Commit-Merge Deliberation
-          </p>
+      <div className="flex items-center justify-between pb-3 border-b border-obsidian-800/80 mb-3">
+        <div className="flex items-center gap-2">
+          <h1 className="text-sm font-bold text-slate-100 flex items-center gap-1.5">
+            <GitBranch className="w-4 h-4 text-amber-400" />
+            Arbor
+          </h1>
+          <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-obsidian-800 text-slate-400 border border-obsidian-700">
+            #{tree.revision}
+          </span>
         </div>
 
         {/* Action Controls */}
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2">
+          {onOpenAgenda && (
+            <button
+              onClick={onOpenAgenda}
+              className="flex items-center gap-1.5 px-2.5 py-1 text-xs text-sky-300 bg-sky-950/60 hover:bg-sky-900/60 border border-sky-700/50 rounded-lg transition"
+            >
+              <Target className="w-3 h-3 text-amber-400" />
+              Agenda
+            </button>
+          )}
           <button
             onClick={() => {
-              const title = prompt('Enter new meeting goal/agenda:', 'Core Architecture & Latency SLA');
+              const title = prompt('Goal:', 'Discussion');
               if (title) onResetMeeting(title);
             }}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-slate-300 bg-obsidian-900 hover:bg-obsidian-800 border border-obsidian-700 rounded-lg transition"
+            className="flex items-center gap-1 px-2.5 py-1 text-xs text-slate-300 bg-obsidian-900 hover:bg-obsidian-800 border border-obsidian-700 rounded-lg transition"
           >
-            <RotateCcw className="w-3.5 h-3.5" />
-            Reset Tree
+            <RotateCcw className="w-3 h-3" />
+            Reset
           </button>
         </div>
       </div>
 
+      {/* Active Agenda Banner */}
+      {rootNode && (
+        <div className="mb-4 p-3 rounded-xl bg-gradient-to-r from-sky-950/40 via-obsidian-900 to-obsidian-950 border border-sky-800/30 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2.5">
+            <div className="w-7 h-7 rounded-lg bg-sky-500/20 text-sky-400 flex items-center justify-center flex-shrink-0">
+              <Target className="w-4 h-4" />
+            </div>
+            <div>
+              <span className="text-[10px] font-semibold text-sky-400 uppercase tracking-wider block">
+                Deliberation Objective
+              </span>
+              <p className="text-xs font-medium text-slate-200 line-clamp-1">
+                {rootNode.text}
+              </p>
+            </div>
+          </div>
+          {onOpenAgenda && (
+            <button
+              onClick={onOpenAgenda}
+              className="text-[11px] text-slate-400 hover:text-sky-300 underline underline-offset-2 flex-shrink-0 transition"
+            >
+              Change
+            </button>
+          )}
+        </div>
+      )}
+
       {/* Interactive Tree View */}
-      <div className="flex-1 space-y-6">
+      <div className="flex-1 space-y-5">
         {/* Canonical Tree Nodes Section */}
         <div>
-          <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3 flex items-center gap-2">
+          <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2.5 flex items-center gap-1.5">
             <Layers className="w-3.5 h-3.5 text-sky-400" />
-            Committed Merkle Nodes ({nodes.length})
+            Nodes ({nodes.length})
           </h2>
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -147,13 +183,13 @@ export const MainStage: React.FC<MainStageProps> = ({
 
         {/* Ghost Sprouts & Active Deliberation Branch Section */}
         {ghostSprouts.length > 0 && (
-          <div className="mt-8 pt-6 border-t border-obsidian-800">
-            <h2 className="text-xs font-semibold text-amber-400 uppercase tracking-wider mb-4 flex items-center gap-2">
-              <Sparkles className="w-4 h-4 animate-spin text-amber-400" />
-              Active Candidate Ghost Sprouts ({ghostSprouts.length})
+          <div className="mt-6 pt-4 border-t border-obsidian-800">
+            <h2 className="text-xs font-semibold text-amber-400 uppercase tracking-wider mb-3 flex items-center gap-1.5">
+              <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+              Proposals ({ghostSprouts.length})
             </h2>
 
-            <div className="space-y-4">
+            <div className="space-y-3">
               {ghostSprouts.map((ghost) => {
                 const voteCount = ghost.votes.length;
                 const hasVoted = ghost.votes.includes(currentVoter);
@@ -161,107 +197,101 @@ export const MainStage: React.FC<MainStageProps> = ({
                 return (
                   <div
                     key={ghost.proposal_id}
-                    className="p-5 rounded-xl border-2 border-dashed border-amber-400/80 bg-amber-500/5 glass-panel shadow-lg transition animate-ghost-glow"
+                    className="p-4 rounded-xl border-2 border-dashed border-amber-400/80 bg-amber-500/5 glass-panel shadow-lg transition"
                   >
-                    <div className="flex flex-col md:flex-row md:items-center justify-between gap-2 mb-3">
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs font-mono px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                    <div className="flex items-center justify-between gap-2 mb-2">
+                      <div className="flex items-center gap-1.5 text-xs text-slate-300">
+                        <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">
                           {ghost.proposal_id}
                         </span>
-                        <span className="text-xs text-slate-300">
-                          Proposed by <b>{ghost.author}</b> under parent <b>{ghost.parent_id}</b>
-                        </span>
+                        <span><b>{ghost.author}</b> • {ghost.parent_id}</span>
                       </div>
 
                       {/* Alignment Badge */}
-                      <div className="flex items-center gap-2">
-                        <span
-                          className={`text-xs px-2.5 py-0.5 rounded-full font-semibold border ${
-                            ghost.has_conflict
-                              ? 'bg-red-500/20 text-red-300 border-red-500/40'
-                              : 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
-                          }`}
-                        >
-                          {ghost.has_conflict ? 'COLLISION DETECTED' : `ALIGNMENT ${(ghost.alignment_score * 100).toFixed(0)}%`}
-                        </span>
-                      </div>
+                      <span
+                        className={`text-[10px] px-2 py-0.5 rounded-full font-semibold border ${
+                          ghost.has_conflict
+                            ? 'bg-red-500/20 text-red-300 border-red-500/40'
+                            : 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                        }`}
+                      >
+                        {ghost.has_conflict ? 'Conflict' : `${(ghost.alignment_score * 100).toFixed(0)}% Match`}
+                      </span>
                     </div>
 
                     {/* Proposal Text */}
-                    <p className="text-base font-semibold text-slate-100 mb-3">
+                    <p className="text-sm font-semibold text-slate-100 mb-2">
                       "{ghost.text}"
                     </p>
 
-                    {/* Trade-off Pill */}
-                    <div className="bg-obsidian-900/90 border border-obsidian-700/80 rounded-lg p-3 text-xs space-y-1.5 mb-4">
-                      <div className="flex items-center gap-2 font-medium text-slate-300">
-                        <Scale className="w-3.5 h-3.5 text-amber-400" />
-                        Deliberation Diff & Trade-Off Analysis:
+                    {/* Trade-off */}
+                    <div className="bg-obsidian-900/90 border border-obsidian-700/80 rounded-lg p-2.5 text-xs space-y-1 mb-3">
+                      <div className="flex items-start gap-2 text-slate-300">
+                        <Scale className="w-3.5 h-3.5 text-amber-400 shrink-0 mt-0.5" />
+                        <p className="leading-relaxed">{ghost.trade_off_analysis}</p>
                       </div>
-                      <p className="text-slate-300 leading-relaxed pl-5">
-                        {ghost.trade_off_analysis}
-                      </p>
                       {ghost.has_conflict && (
-                        <p className="text-red-300 font-medium pl-5 flex items-center gap-1.5 pt-1">
-                          <AlertTriangle className="w-3 h-3 text-red-400" />
+                        <p className="text-red-300 font-medium flex items-center gap-1.5 pt-0.5">
+                          <AlertTriangle className="w-3 h-3 text-red-400 shrink-0" />
                           {ghost.conflict_reason}
                         </p>
                       )}
                     </div>
 
-                    {/* Habermas Machine Compromise Banner */}
+                    {/* Synthesis Banner */}
                     {ghost.compromise_synthesis && (
-                      <div className="mb-4 bg-purple-950/40 border border-purple-500/40 rounded-lg p-3 text-xs">
-                        <div className="flex items-center gap-2 font-bold text-purple-300 mb-1">
-                          <Sparkles className="w-3.5 h-3.5 text-purple-400" />
-                          Habermas Machine Integrative Synthesis:
+                      <div className="mb-3 bg-purple-950/40 border border-purple-500/40 rounded-lg p-2.5 text-xs">
+                        <div className="flex items-start gap-1.5 text-purple-200">
+                          <Sparkles className="w-3.5 h-3.5 text-purple-400 shrink-0 mt-0.5" />
+                          <div>
+                            <span className="font-semibold text-purple-300 mr-1">Synthesis:</span>
+                            <span className="italic">"{ghost.compromise_synthesis}"</span>
+                          </div>
                         </div>
-                        <p className="text-purple-200 leading-relaxed pl-5 italic">
-                          "{ghost.compromise_synthesis}"
-                        </p>
                       </div>
                     )}
 
                     {/* Consensus Voting Footer */}
-                    <div className="flex items-center justify-between pt-3 border-t border-white/10">
-                      <div className="flex items-center gap-3">
-                        <span className="text-xs text-slate-300 font-medium">Consensus:</span>
-                        <div className="flex items-center gap-1.5">
+                    <div className="flex items-center justify-between pt-2.5 border-t border-white/10 text-xs">
+                      <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-1">
                           {Array.from({ length: ghost.requiredVotes }).map((_, i) => (
                             <div
                               key={i}
-                              className={`w-3.5 h-3.5 rounded-full border transition ${
+                              className={`w-3 h-3 rounded-full border transition ${
                                 i < voteCount
-                                  ? 'bg-amber-400 border-amber-300 shadow-[0_0_8px_rgba(251,191,36,0.6)]'
+                                  ? 'bg-amber-400 border-amber-300'
                                   : 'bg-obsidian-800 border-obsidian-600'
                               }`}
                             />
                           ))}
                         </div>
-                        <span className="text-xs font-mono text-amber-300">
-                          {voteCount}/{ghost.requiredVotes} votes
+                        <span className="font-mono text-amber-300">
+                          {voteCount}/{ghost.requiredVotes}
                         </span>
-                        <span className="text-[11px] text-slate-500">
-                          ({ghost.votes.join(', ')})
-                        </span>
+                        {ghost.votes.length > 0 && (
+                          <span className="text-[10px] text-slate-500">
+                            ({ghost.votes.join(', ')})
+                          </span>
+                        )}
                       </div>
 
                       {/* Vote Button */}
                       <button
                         onClick={() => onVote(ghost.proposal_id, currentVoter)}
                         disabled={hasVoted || ghost.isMerging}
-                        className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-semibold transition shadow-md ${
+                        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition shadow ${
                           hasVoted
                             ? 'bg-obsidian-800 text-slate-500 border border-obsidian-700 cursor-not-allowed'
-                            : 'bg-amber-500 hover:bg-amber-400 text-obsidian-950 hover:shadow-amber-500/20'
+                            : 'bg-amber-500 hover:bg-amber-400 text-obsidian-950'
                         }`}
                       >
-                        <ThumbsUp className="w-3.5 h-3.5" />
+                        <ThumbsUp className="w-3 h-3" />
                         {ghost.isMerging
-                          ? 'Solidifying Merkle Root...'
+                          ? 'Merging...'
                           : hasVoted
                           ? 'Voted'
-                          : `Approve as ${currentVoter}`}
+                          : 'Approve'}
                       </button>
                     </div>
                   </div>

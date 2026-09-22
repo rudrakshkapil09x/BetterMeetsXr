@@ -77,11 +77,9 @@ Return ONLY JSON: {{"has_conflict": bool, "conflict_reason": str, "trade_off_ana
             conflict_reason = str(data.get("conflict_reason", ""))
             trade_off_analysis = str(data.get("trade_off_analysis", "Synergistic proposal extending the parent solution node." if not has_conflict else "Constraint collision detected."))
             alignment_score = float(data.get("alignment_score", 0.95))
-        except Exception:
-            has_conflict = False
-            conflict_reason = "No semantic collision detected."
-            trade_off_analysis = "Synergistic proposal extending the parent solution node."
-            alignment_score = 0.90
+        except Exception as e:
+            raise RuntimeError(f"Direct LM Studio proposal analysis failed: {e}. Fallbacks are disabled.")
+
 
         return ProposalDiff(
             proposal_id=proposal_id,

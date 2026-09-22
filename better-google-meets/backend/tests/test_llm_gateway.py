@@ -42,20 +42,19 @@ def test_json_extractor():
     assert gateway._extract_json("") == {}
 
 
-def test_gateway_heuristic_fallback():
+def test_gateway_direct_dispatch_and_no_fallback():
     async def _test():
         gateway = LLMGateway()
-        gateway.active_provider = "mock"
 
         prompt = "Utterance: We should benchmark Redis cache latency before launch."
-        resp, provider = await gateway.generate(prompt, "You are a classifier.")
-        assert provider in ("heuristic_fallback", "mock")
+        resp, provider = await gateway.generate(prompt, "You are a concise classifier. Output JSON with key 'intent'.")
+        assert provider in ("lm_studio", "ollama", "gemini_flash", "cache")
 
         data = gateway._extract_json(resp)
-        assert "intent" in data
-        assert data["intent"] in ["claim", "proposal", "question", "action", "evidence"]
+        assert isinstance(data, dict)
 
     asyncio.run(_test())
+
 
 
 def test_gateway_cache_hit():

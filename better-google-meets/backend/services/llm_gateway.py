@@ -5,11 +5,15 @@ Supports:
 2. Google Gemini Flash (Direct REST API with Gemini 2.5 Flash / 1.5 Flash)
 3. In-Memory LRU Prompt Cache (sub-1ms response for repeated queries)
 4. Heuristic Fallback Engine (guarantees meeting continuity during network drops)
+5. Singleton Persistent HTTP Connection Pool (eliminates per-call TCP/TLS churn)
+6. Robust Nested JSON Parser & Repair (zero-regex-truncation on nested objects)
 """
 
 from __future__ import annotations
+import asyncio
 import hashlib
 import json
+
 import logging
 import re
 import time
@@ -17,7 +21,7 @@ from collections import OrderedDict
 from typing import Any, Dict, Optional, Tuple
 import httpx
 
-from config import settings
+from core.config import settings
 
 logger = logging.getLogger("LLMGateway")
 
@@ -45,39 +49,108 @@ class LRUCache:
 class LLMGateway:
     """
     Unified dual-engine LLM client with intelligent fallback,
-    latency tracking, and in-memory caching.
+    latency tracking, persistent connection pooling, and in-memory caching.
     """
 
-    def __init__(self):
+    def __init__(self, http_client: Optional[httpx.AsyncClient] = None):
         self.cache = LRUCache(capacity=settings.LRU_CACHE_CAPACITY)
         self.active_provider = settings.ACTIVE_PROVIDER
-        self.last_latency_ms: Dict[str, float] = {"lm_studio": 0.0, "gemini_flash": 0.0}
-        self.provider_status: Dict[str, bool] = {"lm_studio": False, "gemini_flash": False}
+        self.last_latency_ms: Dict[str, float] = {"ollama": 0.0, "lm_studio": 0.0, "gemini_flash": 0.0}
+        self.provider_status: Dict[str, bool] = {"ollama": False, "lm_studio": False, "gemini_flash": False}
+        self.last_healthy_local_endpoint: Optional[str] = None
+        self._external_client = http_client
+        self._internal_client: Optional[httpx.AsyncClient] = None
+        self._client_loop: Optional[asyncio.AbstractEventLoop] = None
+
+    async def get_client(self) -> httpx.AsyncClient:
+        """Returns the persistent pooled HTTP client, lazy-initializing or recreating if event loop changed."""
+        current_loop = asyncio.get_running_loop()
+        if self._external_client and not self._external_client.is_closed:
+            return self._external_client
+
+        if self._internal_client is not None:
+            if self._internal_client.is_closed or self._client_loop != current_loop:
+                try:
+                    if not self._internal_client.is_closed:
+                        await self._internal_client.aclose()
+                except Exception:
+                    pass
+                self._internal_client = None
+
+        if self._internal_client is None:
+            self._internal_client = httpx.AsyncClient(
+                timeout=httpx.Timeout(15.0, connect=4.0),
+                limits=httpx.Limits(max_keepalive_connections=20, max_connections=50)
+            )
+            self._client_loop = current_loop
+
+        return self._internal_client
+
+
+    async def close(self):
+        """Cleanly closes the internal pooled HTTP client."""
+        if self._internal_client and not self._internal_client.is_closed:
+            await self._internal_client.aclose()
+            self._internal_client = None
 
     def _compute_cache_key(self, prompt: str, system_prompt: str, max_tokens: int) -> str:
         raw = f"{system_prompt}||{prompt}||{max_tokens}"
         return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
     def _extract_json(self, text: str) -> Dict[str, Any]:
-        """Extract and parse JSON safely, even when surrounded by commentary or markdown."""
+        """
+        Extract and parse JSON safely.
+        Handles markdown codeblocks, prose wrapping, and nested JSON structures
+        via balanced brace parsing, eliminating non-greedy regex truncation.
+        """
         if not text:
             return {}
-        cleaned = re.sub(r"^```(?:json)?\s*", "", text.strip(), flags=re.MULTILINE)
-        cleaned = re.sub(r"\s*```$", "", cleaned.strip(), flags=re.MULTILINE)
 
-        # Direct JSON load attempt
+        cleaned = text.strip()
+        # Strip markdown fences
+        cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned, flags=re.MULTILINE)
+        cleaned = re.sub(r"\s*```$", "", cleaned, flags=re.MULTILINE).strip()
+
+        # 1. Direct JSON load attempt
         try:
             return json.loads(cleaned)
         except Exception:
             pass
 
-        # Regex search for first JSON object
-        match = re.search(r"(\{.*?\})", cleaned, re.DOTALL)
-        if match:
-            try:
-                return json.loads(match.group(1))
-            except Exception:
-                pass
+        # 2. Balanced brace scanner to locate outer JSON object
+        start_idx = cleaned.find("{")
+        while start_idx != -1:
+            depth = 0
+            in_string = False
+            escape = False
+            for i in range(start_idx, len(cleaned)):
+                c = cleaned[i]
+                if escape:
+                    escape = False
+                    continue
+                if c == "\\":
+                    escape = True
+                    continue
+                if c == '"':
+                    in_string = not in_string
+                    continue
+                if not in_string:
+                    if c == "{":
+                        depth += 1
+                    elif c == "}":
+                        depth -= 1
+                        if depth == 0:
+                            candidate = cleaned[start_idx:i+1]
+                            try:
+                                return json.loads(candidate)
+                            except Exception:
+                                # Try stripping trailing commas
+                                candidate_fixed = re.sub(r",\s*([\]}])", r"\1", candidate)
+                                try:
+                                    return json.loads(candidate_fixed)
+                                except Exception:
+                                    break
+            start_idx = cleaned.find("{", start_idx + 1)
 
         return {}
 
@@ -98,78 +171,83 @@ class LLMGateway:
             logger.info("Gateway: Cache HIT (0ms, 0 tokens)")
             return cached, "cache"
 
-        # Determine route based on active_provider
-        provider = self.active_provider.lower()
+        # Direct local engine generation: LM Studio primary, Ollama secondary
+        res, ok, used_ep = await self._call_local_engine(prompt, system_prompt, temperature, max_tokens)
+        if ok:
+            self.cache.put(cache_key, res)
+            return res, used_ep
 
-        if provider in ("auto", "lm_studio"):
-            res, ok = await self._call_lm_studio(prompt, system_prompt, temperature, max_tokens)
-            if ok:
-                self.cache.put(cache_key, res)
-                return res, "lm_studio"
-            elif provider == "lm_studio":
-                logger.warning("LM Studio requested but failed. Falling back to heuristic.")
-                fallback = self._heuristic_fallback(prompt, system_prompt)
-                self.cache.put(cache_key, fallback)
-                return fallback, "heuristic_fallback"
-
-        if provider in ("auto", "gemini_flash"):
+        # Optional Gemini cloud fallback only if API key explicitly configured
+        if settings.GEMINI_API_KEY:
             res, ok = await self._call_gemini_flash(prompt, system_prompt, temperature, max_tokens)
             if ok:
                 self.cache.put(cache_key, res)
                 return res, "gemini_flash"
-            elif provider == "gemini_flash":
-                logger.warning("Gemini Flash requested but failed. Falling back to heuristic.")
-                fallback = self._heuristic_fallback(prompt, system_prompt)
-                self.cache.put(cache_key, fallback)
-                return fallback, "heuristic_fallback"
 
-        # Universal fallback if all else fails
-        logger.info("Using deterministic heuristic fallback.")
-        fallback = self._heuristic_fallback(prompt, system_prompt)
-        self.cache.put(cache_key, fallback)
-        return fallback, "heuristic_fallback"
+        # Universal strict failure: NO heuristic proxy/fallback permitted!
+        logger.error("LLMGateway: Direct local LLM call failed across all runtimes. Heuristic fallbacks disabled.")
+        raise RuntimeError("Direct LLM generation failed on local runtime (LM Studio / Ollama). Fallback proxies are disabled.")
 
-    async def _call_lm_studio(
+    async def _call_local_engine(
         self, prompt: str, system_prompt: str, temperature: float, max_tokens: int
-    ) -> Tuple[str, bool]:
-        """Call Local LM Studio (OpenAI-compatible endpoint)."""
-        start_t = time.perf_counter()
-        url = f"{settings.LM_STUDIO_URL}/chat/completions"
-        payload = {
-            "model": settings.LM_STUDIO_MODEL,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": prompt}
-            ],
-            "temperature": temperature,
-            "max_tokens": max_tokens
-        }
-        try:
-            async with httpx.AsyncClient(timeout=settings.LM_STUDIO_TIMEOUT) as client:
-                resp = await client.post(url, json=payload)
+    ) -> Tuple[str, bool, str]:
+        """
+        Calls local LLM runtime with primary target LM Studio (port 1234).
+        """
+        endpoints = [
+            {"name": "lm_studio", "url": f"{settings.LM_STUDIO_URL}/chat/completions", "model": settings.LM_STUDIO_MODEL},
+            {"name": "ollama", "url": f"{settings.OLLAMA_URL}/chat/completions", "model": settings.OLLAMA_MODEL}
+        ]
+
+        # Prioritize last healthy endpoint
+        if self.last_healthy_local_endpoint:
+            endpoints.sort(key=lambda ep: 0 if ep["name"] == self.last_healthy_local_endpoint else 1)
+
+        client = await self.get_client()
+        for ep in endpoints:
+            start_t = time.perf_counter()
+            payload = {
+                "model": ep["model"],
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": prompt}
+                ],
+                "temperature": temperature,
+                "max_tokens": max_tokens
+            }
+            try:
+                resp = await client.post(ep["url"], json=payload, timeout=settings.LOCAL_LLM_TIMEOUT)
                 latency = (time.perf_counter() - start_t) * 1000.0
-                self.last_latency_ms["lm_studio"] = round(latency, 1)
+                self.last_latency_ms[ep["name"]] = round(latency, 1)
 
                 if resp.status_code == 200:
                     data = resp.json()
                     content = data["choices"][0]["message"]["content"]
-                    self.provider_status["lm_studio"] = True
-                    logger.info(f"LM Studio call successful in {latency:.1f}ms")
-                    return content, True
+                    self.provider_status[ep["name"]] = True
+                    self.last_healthy_local_endpoint = ep["name"]
+                    logger.info(f"Local LLM ({ep['name']}) call successful in {latency:.1f}ms")
+                    return content, True, ep["name"]
                 else:
-                    self.provider_status["lm_studio"] = False
-                    return "", False
-        except Exception as e:
-            self.provider_status["lm_studio"] = False
-            logger.warning(f"LM Studio unavailable ({e}). Triggering fallback.")
-            return "", False
+                    self.provider_status[ep["name"]] = False
+                    logger.warning(f"Local LLM ({ep['name']}) returned status {resp.status_code}: {resp.text[:120]}")
+            except Exception as e:
+                self.provider_status[ep["name"]] = False
+                logger.warning(f"Local LLM ({ep['name']}) connection error: {e}")
+
+        return "", False, "none"
+
+    async def _call_lm_studio(
+        self, prompt: str, system_prompt: str, temperature: float, max_tokens: int
+    ) -> Tuple[str, bool]:
+        """Backward compatibility wrapper for _call_local_engine."""
+        content, ok, _ = await self._call_local_engine(prompt, system_prompt, temperature, max_tokens)
+        return content, ok
 
     async def _call_gemini_flash(
         self, prompt: str, system_prompt: str, temperature: float, max_tokens: int
     ) -> Tuple[str, bool]:
-        """Call Google Gemini Flash via REST API."""
+        """Call Google Gemini Flash via persistent HTTP connection."""
         if not settings.GEMINI_API_KEY:
-            logger.info("No GEMINI_API_KEY provided; skipping Gemini Flash.")
             self.provider_status["gemini_flash"] = False
             return "", False
 
@@ -192,79 +270,35 @@ class LLMGateway:
         }
 
         try:
-            async with httpx.AsyncClient(timeout=settings.GEMINI_TIMEOUT) as client:
-                resp = await client.post(url, json=payload)
-                latency = (time.perf_counter() - start_t) * 1000.0
-                self.last_latency_ms["gemini_flash"] = round(latency, 1)
+            client = await self.get_client()
+            resp = await client.post(url, json=payload, timeout=settings.GEMINI_TIMEOUT)
+            latency = (time.perf_counter() - start_t) * 1000.0
+            self.last_latency_ms["gemini_flash"] = round(latency, 1)
 
-                if resp.status_code == 200:
-                    data = resp.json()
-                    candidates = data.get("candidates", [])
-                    if candidates:
-                        content = candidates[0]["content"]["parts"][0]["text"]
-                        self.provider_status["gemini_flash"] = True
-                        logger.info(f"Gemini Flash call successful in {latency:.1f}ms")
-                        return content, True
-                self.provider_status["gemini_flash"] = False
-                return "", False
+            if resp.status_code == 200:
+                data = resp.json()
+                candidates = data.get("candidates", [])
+                if candidates:
+                    content = candidates[0]["content"]["parts"][0]["text"]
+                    self.provider_status["gemini_flash"] = True
+                    logger.info(f"Gemini Flash call successful in {latency:.1f}ms")
+                    return content, True
+            self.provider_status["gemini_flash"] = False
+            return "", False
         except Exception as e:
             self.provider_status["gemini_flash"] = False
             logger.warning(f"Gemini Flash call failed: {e}")
             return "", False
 
-    def _heuristic_fallback(self, prompt: str, system_prompt: str = "") -> str:
-        """Deterministic, instant heuristic engine guaranteeing zero dropped turns."""
-        prompt_lower = prompt.lower()
-        sys_lower = system_prompt.lower()
-        combined = f"{prompt_lower} {sys_lower}"
 
-        # 1. Texterial text compression / knead
-        if "compress" in sys_lower or "knead" in sys_lower or "sharp 5-10 word" in sys_lower:
-            words = prompt.replace("Text:", "").strip().split()
-            return " ".join(words[:7]) + "."
-
-        # 2. Texterial text elaboration / stretch
-        if "elaboration" in sys_lower or "stretch" in sys_lower:
-            base = prompt.replace("Text:", "").strip()
-            return f"{base} This ensures operational resilience and architectural alignment."
-
-        # 3. Speech ingestion & intent classification
-        if "classify" in combined or "distill" in combined or "utterance:" in prompt_lower or "speaker:" in prompt_lower:
-            intent = "claim"
-            if any(w in prompt_lower for w in ["propose", "suggest", "should", "could", "recommend"]):
-                intent = "proposal"
-            elif any(w in prompt_lower for w in ["why", "what", "how", "when", "?"]):
-                intent = "question"
-            elif any(w in prompt_lower for w in ["action", "will do", "assign", "by friday", "next step"]):
-                intent = "action"
-            elif any(w in prompt_lower for w in ["benchmark", "data", "log", "metrics", "tested"]):
-                intent = "evidence"
-
-            distilled_line = prompt.split("\n")[-1].replace("Utterance:", "").strip()
-            return json.dumps({
-                "distilled_text": distilled_line[:120],
-                "intent": intent,
-                "confidence": 0.85
-            })
-
-        # 4. Proposal conflict analysis request
-        has_conflict = any(w in prompt_lower for w in ["conflict", "contradict", "zero budget", "reject", "impossible", "exceeds"])
-        return json.dumps({
-            "has_conflict": has_conflict,
-            "conflict_reason": "Constraint collision detected with active parent node." if has_conflict else "No semantic collision detected.",
-            "trade_off_analysis": "Operational constraint clash requires compromise." if has_conflict else "Synergistic proposal extending the parent solution node.",
-            "alignment_score": 0.45 if has_conflict else 0.92,
-            "compromise_synthesis": "Adopt phased rollout: validate baseline performance in staging before committing full resources." if has_conflict else None
-        })
 
     async def get_engine_status(self) -> Dict[str, Any]:
-        """Returns live status and latency pings of available engines."""
-        # Lightweight ping to LM Studio
+        """Returns live status and latency pings of available engines using persistent connection."""
         lm_online = False
         try:
-            async with httpx.AsyncClient(timeout=1.0) as client:
-                r = await client.get(f"{settings.LM_STUDIO_URL}/models")
-                lm_online = (r.status_code == 200)
+            client = await self.get_client()
+            r = await client.get(f"{settings.LM_STUDIO_URL}/models", timeout=1.0)
+            lm_online = (r.status_code == 200)
         except Exception:
             lm_online = False
 

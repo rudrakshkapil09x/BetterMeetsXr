@@ -22,9 +22,12 @@ export function useWebSocket(onEvent?: (event: WebSocketEvent) => void) {
       return;
     }
 
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    // Use window.location.host in dev with proxy, or fallback to backend port 8000
-    const wsUrl = `${protocol}//${window.location.host}/ws`;
+    const isExtension = window.location.protocol === 'chrome-extension:';
+    const protocol = isExtension ? 'ws:' : (window.location.protocol === 'https:' ? 'wss:' : 'ws:');
+    const host = isExtension ? '127.0.0.1:8000' : window.location.host;
+    const params = new URLSearchParams(window.location.search);
+    const meetingId = params.get('meeting_id') || 'meet-session-01';
+    const wsUrl = `${protocol}//${host}/ws?meeting_id=${encodeURIComponent(meetingId)}`;
 
     try {
       const ws = new WebSocket(wsUrl);

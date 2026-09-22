@@ -1,18 +1,37 @@
 import { useState, useEffect, useCallback } from 'react';
-import { TreeSnapshot, GhostSprout, IdeaNode, ProposalDiff, NodeType } from '../types/tree';
-import { getTree, analyzeProposal, mergeProposal, resetTree as apiResetTree } from '../services/api';
+import { TreeSnapshot, GhostSprout, IdeaNode, ProposalDiff, NodeType, SlateCard } from '../types/tree';
+import { getTree, getSpeechSlates, analyzeProposal, mergeProposal, resetTree as apiResetTree } from '../services/api';
 import { useWebSocket, WebSocketEvent } from './useWebSocket';
 
 export function useArbor() {
   const [tree, setTree] = useState<TreeSnapshot | null>(null);
   const [ghostSprouts, setGhostSprouts] = useState<Record<string, GhostSprout>>({});
+  const [slateCards, setSlateCards] = useState<SlateCard[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [selectedParentId, setSelectedParentId] = useState<string>('node_0000');
 
   const handleWsEvent = useCallback((event: WebSocketEvent) => {
     if (event.event === 'INITIAL_SNAPSHOT' && event.data) {
       setTree(event.data);
+      if (event.data.slates && Array.isArray(event.data.slates)) {
+        setSlateCards(event.data.slates);
+      }
       setIsLoading(false);
+    } else if (event.event === 'SPEECH_CARD_INGESTED' && (event as any).card) {
+      const newCard = (event as any).card;
+      setSlateCards((prev) => [newCard, ...prev.filter((c) => c.id !== newCard.id)]);
+    } else if (event.event === 'SPEECH_CARD_UPDATED' && (event as any).card) {
+      const updatedCard = (event as any).card as SlateCard;
+      setSlateCards((prev) =>
+        prev.map((c) => (c.id === updatedCard.id ? { ...c, ...updatedCard } : c))
+      );
+    } else if (event.event === 'BATCH_IDEAS_EXTRACTED' && (event as any).cards) {
+      const newCards = (event as any).cards as SlateCard[];
+      setSlateCards((prev) => {
+        const existingIds = new Set(prev.map(c => c.id));
+        const filteredNew = newCards.filter(c => !existingIds.has(c.id));
+        return [...filteredNew, ...prev];
+      });
     } else if (event.event === 'TREE_MUTATED' && event.node) {
       setTree((prev) => {
         if (!prev) return prev;
@@ -66,6 +85,7 @@ export function useArbor() {
     } else if (event.event === 'TREE_RESET' && event.data) {
       setTree(event.data);
       setGhostSprouts({});
+      setSlateCards([]);
     }
   }, []);
 
@@ -74,10 +94,14 @@ export function useArbor() {
   const fetchInitialTree = useCallback(async () => {
     try {
       setIsLoading(true);
-      const data = await getTree();
-      setTree(data);
+      const [treeData, slatesData] = await Promise.all([
+        getTree().catch((e) => { console.error(e); return null; }),
+        getSpeechSlates().catch((e) => { console.error(e); return { cards: [] }; })
+      ]);
+      if (treeData) setTree(treeData);
+      if (slatesData && slatesData.cards) setSlateCards(slatesData.cards);
     } catch (e) {
-      console.error('Failed to load initial tree:', e);
+      console.error('Failed to load initial tree & slates:', e);
     } finally {
       setIsLoading(false);
     }
@@ -160,6 +184,8 @@ export function useArbor() {
   return {
     tree,
     ghostSprouts: Object.values(ghostSprouts),
+    slateCards,
+    setSlateCards,
     selectedParentId,
     setSelectedParentId,
     stageProposal,

@@ -9,9 +9,10 @@ import hashlib
 import json
 import threading
 import time
+from collections import deque
 from dataclasses import dataclass, field, asdict
 from enum import Enum
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Set
 
 
 class NodeType(str, Enum):
@@ -36,6 +37,8 @@ class IdeaNode:
     children_ids: List[str] = field(default_factory=list)
     metadata: Dict[str, str] = field(default_factory=dict)
     content_hash: str = ""
+    # Parent content hashes embedded for cryptographic Merkle provenance
+    parent_hashes: List[str] = field(default_factory=list)
 
     def __post_init__(self):
         if not self.parent_ids and self.parent_id:
@@ -44,9 +47,13 @@ class IdeaNode:
             self.content_hash = self.compute_hash()
 
     def compute_hash(self) -> str:
+        """
+        True Merkle node hash: binds node_type, text, author, and parent hashes.
+        Any mutation in an ancestor will propagate through parent_hashes.
+        """
         type_str = self.node_type.value if hasattr(self.node_type, "value") else str(self.node_type)
-        parents_str = ",".join(sorted(self.parent_ids)) if self.parent_ids else (self.parent_id or "")
-        payload = f"{self.id}:{parents_str}:{type_str}:{self.text}:{self.author}"
+        parent_hashes_str = ",".join(sorted(self.parent_hashes)) if self.parent_hashes else ",".join(sorted(self.parent_ids))
+        payload = f"{type_str}:{self.text}:{self.author}:{parent_hashes_str}"
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 
 
@@ -67,9 +74,9 @@ class ProposalDiff:
 
 class MerkleDAG:
     """
-    Thread-safe Merkle Directed Acyclic Graph (DAG) representing the
-    canonical shared consensus (The Arbor) of a meeting.
-    Protected via reentrant locks (RLock) to prevent race conditions.
+    Thread-safe, cryptographically authentic Merkle Directed Acyclic Graph (DAG)
+    representing the canonical shared consensus (The Arbor) of a meeting.
+    Supports topological ancestry queries and deterministic state hashing.
     """
 
     def __init__(self, meeting_id: str):
@@ -79,22 +86,44 @@ class MerkleDAG:
         self.revision: int = 0
         self.commit_history: List[Dict] = []
         self._lock = threading.RLock()
+        self._id_counter: int = 0
+
+    def _generate_next_id(self) -> str:
+        """Generates sequential node IDs while avoiding any collision."""
+        while True:
+            candidate = f"node_{self._id_counter:04d}"
+            self._id_counter += 1
+            if candidate not in self.nodes:
+                return candidate
 
     def create_root(self, title: str, author: str = "AgendaChair") -> IdeaNode:
         with self._lock:
             root_id = "node_0000"
+            self._id_counter = 1
             root_node = IdeaNode(
                 id=root_id,
                 text=title,
                 node_type=NodeType.GOAL,
                 author=author,
                 parent_id=None,
-                parent_ids=[]
+                parent_ids=[],
+                parent_hashes=[]
             )
             self.nodes[root_id] = root_node
             self.root_id = root_id
             self._record_commit("INITIALIZE_ROOT", [root_id])
             return root_node
+
+    def update_root_title(self, title: str, author: str = "AgendaChair") -> IdeaNode:
+        with self._lock:
+            if not self.root_id or self.root_id not in self.nodes:
+                return self.create_root(title=title, author=author)
+            root = self.nodes[self.root_id]
+            root.text = title
+            root.author = author
+            root.content_hash = root.compute_hash()
+            self._record_commit("UPDATE_ROOT_AGENDA", [self.root_id])
+            return root
 
     def add_node(
         self,
@@ -115,7 +144,10 @@ class MerkleDAG:
                     if p in self.nodes and p not in parent_ids:
                         parent_ids.append(p)
 
-            node_id = f"node_{len(self.nodes):04d}"
+            # Collect parent hashes for Merkle cryptographic linkage
+            parent_hashes = [self.nodes[pid].content_hash for pid in parent_ids if pid in self.nodes]
+
+            node_id = self._generate_next_id()
             node = IdeaNode(
                 id=node_id,
                 text=text,
@@ -123,7 +155,8 @@ class MerkleDAG:
                 author=author,
                 parent_id=parent_id,
                 parent_ids=parent_ids,
-                metadata=metadata or {}
+                metadata=metadata or {},
+                parent_hashes=parent_hashes
             )
             self.nodes[node_id] = node
             for p_id in parent_ids:
@@ -132,6 +165,39 @@ class MerkleDAG:
 
             self._record_commit(f"ADD_NODE_{node_id}", [node_id])
             return node
+
+    def get_ancestry(self, start_node_id: str, max_depth: int = 6) -> List[IdeaNode]:
+        """
+        Topological BFS traversal from a start node up to root.
+        Returns ordered direct ancestors (immediate parents first), fixing Bug #6 blind slicing.
+        """
+        with self._lock:
+            if start_node_id not in self.nodes:
+                return []
+
+            visited: Set[str] = set()
+            queue: deque[str] = deque([start_node_id])
+            ancestry: List[IdeaNode] = []
+
+            while queue and len(ancestry) < max_depth:
+                curr_id = queue.popleft()
+                if curr_id in visited:
+                    continue
+                visited.add(curr_id)
+
+                node = self.nodes.get(curr_id)
+                if not node:
+                    continue
+
+                if curr_id != start_node_id:
+                    ancestry.append(node)
+
+                # Add parents to queue
+                for pid in node.parent_ids:
+                    if pid in self.nodes and pid not in visited:
+                        queue.append(pid)
+
+            return ancestry
 
     def compute_state_hash(self) -> str:
         """
@@ -142,7 +208,11 @@ class MerkleDAG:
             if not self.nodes:
                 return hashlib.sha256(b"EMPTY_DAG").hexdigest()[:16]
 
-            sorted_hashes = sorted([f"{nid}:{n.content_hash}" for nid, n in self.nodes.items()])
+            # Sorted concatenation of (content_hash + node_type + parent_hashes)
+            sorted_hashes = sorted([
+                f"{n.content_hash}:{n.node_type.value}:{','.join(sorted(n.parent_hashes))}"
+                for n in self.nodes.values()
+            ])
             combined = "|".join(sorted_hashes)
             return hashlib.sha256(combined.encode("utf-8")).hexdigest()[:16]
 
@@ -167,3 +237,48 @@ class MerkleDAG:
                 "nodes": {nid: asdict(node) for nid, node in self.nodes.items()},
                 "commit_history": self.commit_history
             }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "MerkleDAG":
+        """Reconstructs a MerkleDAG from exported dictionary / DB row."""
+        dag = cls(meeting_id=data.get("meeting_id", "default-meeting"))
+        dag.revision = data.get("revision", 0)
+        dag.root_id = data.get("root_id")
+        dag.commit_history = data.get("commit_history", [])
+
+        nodes_data = data.get("nodes", {})
+        max_idx = 0
+        for nid, ndict in nodes_data.items():
+            node_type = ndict.get("node_type", "claim")
+            if isinstance(node_type, str):
+                try:
+                    node_type = NodeType(node_type.lower())
+                except ValueError:
+                    node_type = NodeType.CLAIM
+
+            node = IdeaNode(
+                id=nid,
+                text=ndict.get("text", ""),
+                node_type=node_type,
+                author=ndict.get("author", "anonymous"),
+                parent_id=ndict.get("parent_id"),
+                parent_ids=ndict.get("parent_ids", []),
+                created_at=ndict.get("created_at", time.time()),
+                children_ids=ndict.get("children_ids", []),
+                metadata=ndict.get("metadata", {}),
+                content_hash=ndict.get("content_hash", ""),
+                parent_hashes=ndict.get("parent_hashes", [])
+            )
+            dag.nodes[nid] = node
+
+            # Track highest node_xxxx index for id generator
+            if nid.startswith("node_"):
+                try:
+                    idx = int(nid.replace("node_", ""))
+                    if idx >= max_idx:
+                        max_idx = idx + 1
+                except ValueError:
+                    pass
+
+        dag._id_counter = max_idx
+        return dag

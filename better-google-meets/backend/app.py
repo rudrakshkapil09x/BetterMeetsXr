@@ -1,7 +1,11 @@
 """
-BetterGoogleMeets: Production FastAPI & WebSocket Server
-Provides real-time Merkle DAG state synchronization, dual-engine LLM gateway,
-and Branch-Commit-Merge deliberation protocol for Google Meet.
+BetterGoogleMeets: Production FastAPI & WebSocket Server (v2.1.0)
+Features:
+1. Lifespan resource management (persistent pooled HTTP, SQLite schema init)
+2. Multi-tenant meeting isolation with room-isolated WebSockets
+3. SQLite WAL-mode ACID persistence across restarts
+4. True cryptographically authentic Merkle DAG with topological ancestry context
+5. Dual-engine LLM gateway (Local LM Studio + Gemini Flash with LRU cache)
 """
 
 from __future__ import annotations
@@ -9,23 +13,47 @@ import asyncio
 import json
 import logging
 import time
+from contextlib import asynccontextmanager
 from typing import Dict, List, Optional
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-from config import settings
+from core.config import settings
+from core.database import db
+from core.websocket_hub import WebSocketHub
 from models.tree import MerkleDAG, NodeType, ProposalDiff
 from services.llm_gateway import LLMGateway
 from services.deliberation import DeliberationEngine
+from services.session_manager import session_manager
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("BetterGoogleMeets")
 
+# Singletons for services & WebSocket routing
+hub = WebSocketHub()
+gateway = LLMGateway()
+deliberation_engine = DeliberationEngine(gateway=gateway)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup: initialize database tables and warm up persistent HTTP client
+    logger.info("Starting BetterGoogleMeets backend...")
+    await db.init_schema()
+    # Initialize default meeting DAG
+    await session_manager.get_or_create_dag("meet-session-01")
+    yield
+    # Shutdown: clean up HTTP client and sockets
+    logger.info("Shutting down BetterGoogleMeets backend...")
+    await gateway.close()
+
+
 app = FastAPI(
     title="BetterGoogleMeets Deliberation Backend",
-    version="2.0.0",
-    description="Synchronous Epistemic Version Control & Tangible Deliberation for Video Meetings"
+    version="2.1.0",
+    description="Synchronous Epistemic Version Control & Tangible Deliberation for Video Meetings",
+    lifespan=lifespan
 )
 
 app.add_middleware(
@@ -36,20 +64,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Canonical In-Memory DAG State
-current_dag = MerkleDAG(meeting_id="meet-session-01")
-current_dag.create_root(
-    title="Cloud Architecture & Sub-15ms Latency SLA",
-    author="AgendaChair"
-)
 
-gateway = LLMGateway()
-deliberation_engine = DeliberationEngine(gateway=gateway)
-
-
+# Request Schemas
 class SpeechIngestRequest(BaseModel):
     speaker: str = Field(..., description="Participant name or ID")
     transcript: str = Field(..., description="Raw verbal utterance")
+    meeting_id: Optional[str] = Field(default="meet-session-01", description="Meeting room ID")
+    padding_history: Optional[List[Dict[str, str]]] = Field(default=None, description="Optional surrounding dialogue padding turns")
+
 
 
 class CardTransformRequest(BaseModel):
@@ -62,6 +84,7 @@ class ProposalRequest(BaseModel):
     candidate_text: str = Field(..., description="Proposed claim or solution")
     author: str = Field(..., description="Proposing participant")
     node_type: str = Field(default="proposal", description="Epistemic node type")
+    meeting_id: Optional[str] = Field(default="meet-session-01", description="Meeting room ID")
 
 
 class MergeRequest(BaseModel):
@@ -71,6 +94,19 @@ class MergeRequest(BaseModel):
     author: str
     node_type: str = Field(default="claim")
     additional_parents: Optional[List[str]] = None
+    meeting_id: Optional[str] = Field(default="meet-session-01", description="Meeting room ID")
+
+
+class VoteRequest(BaseModel):
+    proposal_id: str
+    voter: str
+    meeting_id: Optional[str] = Field(default="meet-session-01", description="Meeting room ID")
+
+
+class AgendaRequest(BaseModel):
+    agenda: str = Field(..., description="Meeting agenda / motive / core objective")
+    meeting_id: Optional[str] = Field(default="meet-session-01", description="Meeting room ID")
+    author: Optional[str] = Field(default="Chair", description="Author or chair")
 
 
 class EngineConfigRequest(BaseModel):
@@ -79,62 +115,35 @@ class EngineConfigRequest(BaseModel):
     lm_studio_url: Optional[str] = None
 
 
-class ConnectionManager:
-    def __init__(self):
-        self.active_connections: List[WebSocket] = []
-
-    async def connect(self, websocket: WebSocket):
-        await websocket.accept()
-        self.active_connections.append(websocket)
-        logger.info(f"WebSocket client connected. Total: {len(self.active_connections)}")
-
-    def disconnect(self, websocket: WebSocket):
-        if websocket in self.active_connections:
-            self.active_connections.remove(websocket)
-            logger.info(f"WebSocket client disconnected. Total: {len(self.active_connections)}")
-
-    async def broadcast(self, message: dict):
-        payload = json.dumps(message)
-        dead = []
-        for ws in self.active_connections:
-            try:
-                await ws.send_text(payload)
-            except Exception as e:
-                logger.error(f"WS broadcast error: {e}")
-                dead.append(ws)
-        for d in dead:
-            self.disconnect(d)
-
-
-manager = ConnectionManager()
-
-
 @app.get("/health")
-async def health_check():
+async def health_check(meeting_id: str = Query("meet-session-01")):
+    dag = await session_manager.get_or_create_dag(meeting_id)
     status = await gateway.get_engine_status()
     return {
         "status": "online",
-        "meeting_id": current_dag.meeting_id,
-        "revision": current_dag.revision,
-        "state_hash": current_dag.compute_state_hash(),
-        "node_count": len(current_dag.nodes),
+        "meeting_id": dag.meeting_id,
+        "revision": dag.revision,
+        "state_hash": dag.compute_state_hash(),
+        "node_count": len(dag.nodes),
         "engine_status": status
     }
 
 
 @app.get("/tree")
-def get_tree_state():
-    return current_dag.export_json()
+async def get_tree_state(meeting_id: str = Query("meet-session-01")):
+    dag = await session_manager.get_or_create_dag(meeting_id)
+    return dag.export_json()
 
 
 @app.post("/tree/reset")
-async def reset_tree(goal_title: str = Query("Cloud Architecture & Sub-15ms Latency SLA")):
-    global current_dag
-    current_dag = MerkleDAG(meeting_id=f"meet-{int(time.time())}")
-    current_dag.create_root(title=goal_title, author="AgendaChair")
-    export = current_dag.export_json()
+async def reset_tree(
+    goal_title: str = Query("Discussion"),
+    meeting_id: str = Query("meet-session-01")
+):
+    dag = await session_manager.reset_dag(meeting_id=meeting_id, goal_title=goal_title)
+    export = dag.export_json()
 
-    await manager.broadcast({
+    await hub.broadcast(meeting_id, {
         "event": "TREE_RESET",
         "state_hash": export["state_hash"],
         "revision": export["revision"],
@@ -144,20 +153,267 @@ async def reset_tree(goal_title: str = Query("Cloud Architecture & Sub-15ms Late
     return export
 
 
+@app.post("/tree/agenda")
+async def set_meeting_agenda(req: AgendaRequest):
+    """
+    Sets or updates the meeting agenda / motive (root goal node) without clearing existing children.
+    Broadcasts the updated tree to all attendees.
+    """
+    meeting_id = req.meeting_id or "meet-session-01"
+    dag = await session_manager.update_agenda(
+        meeting_id=meeting_id,
+        agenda=req.agenda,
+        author=req.author or "Chair"
+    )
+    export = dag.export_json()
+
+    await hub.broadcast(meeting_id, {
+        "event": "TREE_MUTATED",
+        "state_hash": export["state_hash"],
+        "revision": export["revision"],
+        "node": export["nodes"][dag.root_id],
+        "data": export,
+        "timestamp": time.time()
+    })
+    return {
+        "status": "agenda_updated",
+        "agenda": req.agenda,
+        "root_id": dag.root_id,
+        "state_hash": export["state_hash"],
+        "revision": export["revision"],
+        "tree": export
+    }
+
+
+@app.get("/slate")
+async def get_speech_slates(meeting_id: str = Query("meet-session-01"), limit: int = Query(50)):
+    """
+    Returns stored speech cards for the meeting from SQLite.
+    """
+    cards = await db.load_speech_slates(meeting_id=meeting_id, limit=limit)
+    return {
+        "meeting_id": meeting_id,
+        "cards": cards
+    }
+
+
 @app.post("/slate/ingest")
 async def ingest_speech(req: SpeechIngestRequest):
     """
     Transforms noisy speech from a participant into a structured epistemic card
     for their personal, private Upwelling draft slate.
     """
+    meeting_id = req.meeting_id or "meet-session-01"
+    dag = await session_manager.get_or_create_dag(meeting_id)
+    agenda = dag.nodes[dag.root_id].text if dag.root_id and dag.root_id in dag.nodes else None
+
+    # Retrieve dialogue padding context to avoid cutoff ideas
+    padding_context = req.padding_history
+    if not padding_context:
+        recent_transcripts = await db.get_recent_transcripts(meeting_id=meeting_id, limit=5)
+        padding_context = [
+            {"speaker": t.get("speaker", "Participant"), "text": t.get("text", "")}
+            for t in recent_transcripts
+        ]
+
     card_info = await deliberation_engine.distill_speech(
         speaker=req.speaker,
-        raw_transcript=req.transcript
+        raw_transcript=req.transcript,
+        agenda=agenda,
+        padding_context=padding_context
     )
+
+    if card_info.get("is_noise"):
+        logger.info(f"[/slate/ingest] Filtered noise from {req.speaker}: '{req.transcript[:50]}' -> {card_info.get('reason')}")
+        return {
+            "status": "ignored_noise",
+            "speaker": req.speaker,
+            "raw": req.transcript,
+            "reason": card_info.get("reason", "Filtered by epistemic noise layer")
+        }
+
+    # Check if this speech turn is an extension / revision of a recent turn from the same speaker
+    now_ms = time.time() * 1000
+    existing_cards = await db.load_speech_slates(meeting_id=meeting_id, limit=5)
+    matching_card = None
+
+    for prev in existing_cards:
+        if prev.get("speaker") == req.speaker:
+            elapsed = now_ms - prev.get("createdAt", 0)
+            if elapsed < 20000:  # within 20 seconds
+                prev_text = prev.get("rawText", "").strip().lower()
+                new_text = req.transcript.strip().lower()
+                if (
+                    new_text.startswith(prev_text[:12])
+                    or prev_text.startswith(new_text[:12])
+                    or prev_text in new_text
+                    or new_text in prev_text
+                ):
+                    matching_card = prev
+                    break
+
+    if matching_card:
+        card_id_str = matching_card["id"]
+        try:
+            numeric_id = int(card_id_str.replace("card_", ""))
+            await db.update_speech_slate(
+                slate_id=numeric_id,
+                transcript=req.transcript,
+                distilled_text=card_info["distilled_text"],
+                intent=card_info["intent"]
+            )
+        except Exception:
+            pass
+
+        card_obj = {
+            "id": card_id_str,
+            "speaker": req.speaker,
+            "rawText": req.transcript,
+            "distilledText": card_info["distilled_text"],
+            "intent": card_info["intent"],
+            "extractedQuery": card_info.get("extracted_query", ""),
+            "createdAt": matching_card["createdAt"],
+            "isStaged": matching_card.get("isStaged", False)
+        }
+        await hub.broadcast(meeting_id, {
+            "event": "SPEECH_CARD_UPDATED",
+            "card": card_obj,
+            "timestamp": time.time()
+        })
+        return {
+            "status": "updated_turn",
+            "speaker": req.speaker,
+            "raw": req.transcript,
+            "card": card_info,
+            "extracted_query": card_info.get("extracted_query", ""),
+            "card_id": card_id_str
+        }
+
+    # New distinct speech turn
+    await db.save_transcript(
+        meeting_id=meeting_id,
+        speaker=req.speaker,
+        text=req.transcript
+    )
+
+    slate_id = await db.save_speech_slate(
+        meeting_id=meeting_id,
+        speaker=req.speaker,
+        transcript=req.transcript,
+        distilled_text=card_info["distilled_text"],
+        intent=card_info["intent"]
+    )
+
+    card_obj = {
+        "id": f"card_{slate_id or int(time.time()*1000)}",
+        "speaker": req.speaker,
+        "rawText": req.transcript,
+        "distilledText": card_info["distilled_text"],
+        "intent": card_info["intent"],
+        "extractedQuery": card_info.get("extracted_query", ""),
+        "createdAt": time.time() * 1000,
+        "isStaged": False
+    }
+
+    # Broadcast new speech card to all attendees in this room via WebSocket
+    await hub.broadcast(meeting_id, {
+        "event": "SPEECH_CARD_INGESTED",
+        "card": card_obj,
+        "timestamp": time.time()
+    })
+
     return {
         "speaker": req.speaker,
         "raw": req.transcript,
-        "card": card_info
+        "card": card_info,
+        "extracted_query": card_info.get("extracted_query", "")
+    }
+
+
+
+@app.get("/transcripts")
+async def get_transcripts(meeting_id: str = Query("meet-session-01"), limit: int = Query(500)):
+    """
+    Returns the chronological, speaker-labeled conversation log for the meeting.
+    """
+    transcripts = await db.get_all_transcripts(meeting_id=meeting_id, limit=limit)
+    return {
+        "meeting_id": meeting_id,
+        "total": len(transcripts),
+        "transcripts": transcripts
+    }
+
+
+@app.post("/session/extract-ideas")
+async def extract_session_ideas(
+    meeting_id: str = Query("meet-session-01"),
+    force_all: bool = Query(False)
+):
+    """
+    Periodic (e.g. 30-minute) or on-demand batch extraction:
+    Extracts all substantive ideas, proposals, actions, and claims from the multi-speaker
+    dialogue transcript, labels them with speaker attribution, saves them to the slate,
+    and broadcasts to all peers in the room.
+    """
+    if force_all:
+        transcripts = await db.get_all_transcripts(meeting_id=meeting_id, limit=300)
+    else:
+        transcripts = await db.get_unextracted_transcripts(meeting_id=meeting_id, limit=300)
+
+    if not transcripts:
+        return {
+            "status": "no_new_transcripts",
+            "extracted_count": 0,
+            "ideas": []
+        }
+
+    dag = await session_manager.get_or_create_dag(meeting_id)
+    agenda = dag.nodes[dag.root_id].text if dag.root_id and dag.root_id in dag.nodes else None
+
+    ideas = await deliberation_engine.extract_batch_ideas(transcripts, agenda=agenda)
+
+    cards = []
+    now_ms = time.time() * 1000
+    for idx, idea in enumerate(ideas):
+        # Save each idea to speech slates
+        await db.save_speech_slate(
+            meeting_id=meeting_id,
+            speaker=idea["speaker"],
+            transcript=idea.get("rationale", idea["text"]),
+            distilled_text=idea["text"],
+            intent=idea["intent"]
+        )
+
+        card_obj = {
+            "id": f"card_batch_{int(now_ms)}_{idx}",
+            "speaker": idea["speaker"],
+            "rawText": idea.get("rationale", idea["text"]),
+            "distilledText": idea["text"],
+            "intent": idea["intent"],
+            "extractedQuery": idea.get("extracted_query", ""),
+            "createdAt": now_ms + idx,
+            "isStaged": False
+        }
+
+        cards.append(card_obj)
+
+    # Mark transcripts as extracted in SQLite
+    transcript_ids = [t["id"] for t in transcripts if "id" in t]
+    await db.mark_transcripts_extracted(transcript_ids)
+
+    # Broadcast batch extracted ideas to the room
+    await hub.broadcast(meeting_id, {
+        "event": "BATCH_IDEAS_EXTRACTED",
+        "count": len(cards),
+        "cards": cards,
+        "timestamp": time.time()
+    })
+
+    return {
+        "status": "success",
+        "transcripts_processed": len(transcripts),
+        "extracted_count": len(cards),
+        "ideas": cards
     }
 
 
@@ -177,14 +433,17 @@ async def transform_card(req: CardTransformRequest):
 @app.post("/proposal/analyze")
 async def analyze_proposal(req: ProposalRequest):
     """
-    Diffs candidate proposal branch against active Merkle DAG.
+    Diffs candidate proposal branch against active Merkle DAG using topological ancestry.
     Returns trade-off analysis, alignment score, and Habermas compromise if conflicting.
     """
+    meeting_id = req.meeting_id or "meet-session-01"
+    dag = await session_manager.get_or_create_dag(meeting_id)
+
     clean_type = req.node_type.lower()
     node_type_enum = NodeType(clean_type) if clean_type in NodeType._value2member_map_ else NodeType.PROPOSAL
 
     diff = await deliberation_engine.analyze_proposal(
-        dag=current_dag,
+        dag=dag,
         parent_id=req.parent_id,
         candidate_text=req.candidate_text,
         author=req.author,
@@ -204,8 +463,11 @@ async def analyze_proposal(req: ProposalRequest):
         "compromise_synthesis": diff.compromise_synthesis
     }
 
-    # Broadcast ghost sprout to all active meeting attendees
-    await manager.broadcast({
+    # Persist proposal diff in DB
+    await db.save_proposal_diff(result, meeting_id=meeting_id)
+
+    # Broadcast ghost sprout strictly to attendees in this meeting room
+    await hub.broadcast(meeting_id, {
         "event": "GHOST_SPROUT_STAGED",
         "data": result,
         "timestamp": time.time()
@@ -214,13 +476,40 @@ async def analyze_proposal(req: ProposalRequest):
     return result
 
 
+@app.post("/proposal/vote")
+async def vote_proposal(req: VoteRequest):
+    """
+    Records a vote for a candidate ghost sprout and checks for consensus.
+    """
+    meeting_id = req.meeting_id or "meet-session-01"
+    vote_count = await db.record_vote(meeting_id, req.proposal_id, req.voter)
+
+    await hub.broadcast(meeting_id, {
+        "event": "PROPOSAL_VOTED",
+        "proposal_id": req.proposal_id,
+        "voter": req.voter,
+        "vote_count": vote_count,
+        "timestamp": time.time()
+    })
+
+    return {
+        "proposal_id": req.proposal_id,
+        "voter": req.voter,
+        "vote_count": vote_count,
+        "required_votes": settings.REQUIRED_VOTES
+    }
+
+
 @app.post("/proposal/merge")
 async def merge_proposal(req: MergeRequest):
     """
     Atomically commits approved proposal into the canonical Merkle DAG.
-    Broadcasts state mutation with new cryptographic SHA-256 hash.
+    Broadcasts state mutation with new cryptographic SHA-256 hash to the meeting room.
     """
-    if req.parent_id not in current_dag.nodes:
+    meeting_id = req.meeting_id or "meet-session-01"
+    dag = await session_manager.get_or_create_dag(meeting_id)
+
+    if req.parent_id not in dag.nodes:
         raise HTTPException(
             status_code=404,
             detail=f"Parent node '{req.parent_id}' does not exist in Merkle DAG."
@@ -230,7 +519,7 @@ async def merge_proposal(req: MergeRequest):
     node_type_enum = NodeType(clean_type) if clean_type in NodeType._value2member_map_ else NodeType.CLAIM
 
     merged_node = deliberation_engine.merge_proposal(
-        dag=current_dag,
+        dag=dag,
         proposal_id=req.proposal_id,
         parent_id=req.parent_id,
         candidate_text=req.candidate_text,
@@ -239,9 +528,12 @@ async def merge_proposal(req: MergeRequest):
         additional_parents=req.additional_parents
     )
 
-    export = current_dag.export_json()
+    # Persist updated Merkle DAG to SQLite
+    await session_manager.persist_dag(dag)
 
-    await manager.broadcast({
+    export = dag.export_json()
+
+    await hub.broadcast(meeting_id, {
         "event": "TREE_MUTATED",
         "action": "MERGE_PROPOSAL",
         "node": {
@@ -271,7 +563,7 @@ async def get_engine_config():
 
 
 @app.post("/config/engine")
-async def update_engine_config(req: EngineConfigRequest):
+async def update_engine_config(req: EngineConfigRequest, meeting_id: str = Query("meet-session-01")):
     gateway.active_provider = req.active_provider
     if req.gemini_api_key is not None:
         settings.GEMINI_API_KEY = req.gemini_api_key.strip()
@@ -279,7 +571,7 @@ async def update_engine_config(req: EngineConfigRequest):
         settings.LM_STUDIO_URL = req.lm_studio_url.strip()
 
     status = await gateway.get_engine_status()
-    await manager.broadcast({
+    await hub.broadcast(meeting_id, {
         "event": "ENGINE_CONFIG_CHANGED",
         "status": status,
         "timestamp": time.time()
@@ -288,12 +580,19 @@ async def update_engine_config(req: EngineConfigRequest):
 
 
 @app.websocket("/ws")
-async def websocket_endpoint(websocket: WebSocket):
-    await manager.connect(websocket)
-    # Send initial snapshot
+async def websocket_endpoint(websocket: WebSocket, meeting_id: Optional[str] = Query("meet-session-01")):
+    room_id = meeting_id or "meet-session-01"
+    await hub.join(room_id, websocket)
+
+    # Send initial snapshot for this specific meeting room
+    dag = await session_manager.get_or_create_dag(room_id)
+    cards = await db.load_speech_slates(room_id, limit=50)
+    export = dag.export_json()
+    export["slates"] = cards
+
     await websocket.send_text(json.dumps({
         "event": "INITIAL_SNAPSHOT",
-        "data": current_dag.export_json(),
+        "data": export,
         "timestamp": time.time()
     }))
 
@@ -310,7 +609,15 @@ async def websocket_endpoint(websocket: WebSocket):
             except Exception as e:
                 logger.error(f"Malformed WS message: {e}")
     except WebSocketDisconnect:
-        manager.disconnect(websocket)
+        hub.leave(room_id, websocket)
+    except Exception as e:
+        logger.warning(f"WebSocket connection error: {e}")
+        hub.leave(room_id, websocket)
+
+
+@app.websocket("/ws/{meeting_id}")
+async def websocket_endpoint_path(websocket: WebSocket, meeting_id: str):
+    await websocket_endpoint(websocket, meeting_id=meeting_id)
 
 
 if __name__ == "__main__":

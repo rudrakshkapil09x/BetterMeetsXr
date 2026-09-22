@@ -77,13 +77,24 @@ def test_speech_distillation():
         gateway = LLMGateway()
         engine = DeliberationEngine(gateway=gateway)
 
-        res = await engine.distill_speech(
+        # 1. Substantive technical proposal must pass filtration
+        res_substantive = await engine.distill_speech(
             speaker="Alice",
             raw_transcript="I really think we should enforce strict database replication rules by next week."
         )
-        assert "distilled_text" in res
-        assert "intent" in res
-        assert res["intent"] in ["claim", "proposal", "question", "action", "evidence"]
+        assert "distilled_text" in res_substantive
+        assert "intent" in res_substantive
+        assert res_substantive["is_noise"] is False
+        assert len(res_substantive["distilled_text"]) > 0
+
+        # 2. Fragmented meta-chatter / disfluent speech must be filtered by the LLM layer
+        res_noise = await engine.distill_speech(
+            speaker="RUDRAKSHKAPIL Himanshu",
+            raw_transcript="It is better. Very better. Notes by name. Like, it's, it's not supposed to make. Just random notes is. Text to extract."
+        )
+        assert res_noise["is_noise"] is True
+        assert res_noise["distilled_text"] == ""
+        assert len(res_noise["reason"]) > 0
 
     asyncio.run(_test())
 
@@ -100,6 +111,50 @@ def test_texterial_transforms():
 
         stretched = await engine.transform_card("stretch", "Deploy Redis.")
         assert len(stretched) > 0
+
+    asyncio.run(_test())
+
+
+def test_noise_filtering():
+    from services.deliberation import is_noise
+
+    # Spurious Google Meet UI text and fragments MUST be filtered
+    assert is_noise("Leave call") is True
+    assert is_noise("Turn off microphone") is True
+    assert is_noise("Turn off camera") is True
+    assert is_noise("More options") is True
+    assert is_noise("People") is True
+    assert is_noise("Meeting details") is True
+    assert is_noise("uh") is True
+    assert is_noise("18:14") is True
+    assert is_noise("") is True
+    assert is_noise("ok yeah") is True
+
+    # Substantive meeting speech MUST pass
+    assert is_noise("We must deploy regional Redis clusters to satisfy our latency SLA.") is False
+    assert is_noise("Alice suggested running a failover benchmark before Friday.") is False
+
+
+def test_extract_batch_ideas():
+    async def _test():
+        gateway = LLMGateway()
+        engine = DeliberationEngine(gateway=gateway)
+
+        transcripts = [
+            {"id": 1, "speaker": "Alice", "text": "We should migrate our database cluster to PostgreSQL 16."},
+            {"id": 2, "speaker": "Bob", "text": "Leave call"},  # Noise
+            {"id": 3, "speaker": "Bob", "text": "That will improve concurrent connection pooling significantly."},
+            {"id": 4, "speaker": "Charlie", "text": "I will prepare the staging migration rehearsal by Thursday."}
+        ]
+
+        ideas = await engine.extract_batch_ideas(transcripts)
+        assert len(ideas) > 0
+        speakers = {i["speaker"] for i in ideas}
+        assert "Alice" in speakers or "Bob" in speakers or "Charlie" in speakers
+        for idea in ideas:
+            assert "text" in idea and len(idea["text"]) > 0
+            assert "intent" in idea
+            assert idea["intent"] in ["claim", "proposal", "question", "action", "evidence"]
 
     asyncio.run(_test())
 

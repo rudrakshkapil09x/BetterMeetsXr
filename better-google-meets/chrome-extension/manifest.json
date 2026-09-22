@@ -1,0 +1,42 @@
+{
+  "manifest_version": 3,
+  "name": "BetterGoogleMeets - Deliberation & Epistemic VCS",
+  "version": "1.0.0",
+  "description": "Synchronous Merkle DAG Deliberation and Live Speech Knowledge Distillation for Google Meet.",
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "action": {
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png"
+    },
+    "default_title": "Open BetterMeets Deliberation Panel"
+  },
+  "permissions": [
+    "sidePanel",
+    "storage",
+    "activeTab"
+  ],
+  "host_permissions": [
+    "https://meet.google.com/*",
+    "http://localhost:8000/*",
+    "http://127.0.0.1:8000/*",
+    "http://localhost:5173/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://meet.google.com/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "side_panel": {
+    "default_path": "dist/index.html"
+  }
+}

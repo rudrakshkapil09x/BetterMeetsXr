@@ -137,7 +137,11 @@ def ingest_speech(req: SpeechIngestRequest):
     Transforms noisy speech from a participant's microphone into a structured
     semantic card for their personal XR slate.
     """
-    card = lm_client.process_speech_chunk(raw_transcript=req.transcript, speaker=req.speaker)
+    try:
+        card = lm_client.process_speech_chunk(raw_transcript=req.transcript, speaker=req.speaker)
+    except RuntimeError as e:
+        logger.error(f"/slate/ingest LLM failure: {e}")
+        raise HTTPException(status_code=503, detail=f"LLM unavailable: {e}")
     return {
         "speaker": req.speaker,
         "raw": req.transcript,
@@ -151,13 +155,17 @@ def analyze_proposal(req: ProposalRequest):
     Diffs candidate branch against current MerkleDAG, returning conflict detection
     and Deliberation Card metrics.
     """
-    diff = deliberation_engine.analyze_proposal(
-        dag=current_dag,
-        parent_id=req.parent_id,
-        candidate_text=req.candidate_text,
-        author=req.author,
-        node_type=NodeType(req.node_type.lower()) if req.node_type.lower() in NodeType._value2member_map_ else NodeType.CLAIM
-    )
+    try:
+        diff = deliberation_engine.analyze_proposal(
+            dag=current_dag,
+            parent_id=req.parent_id,
+            candidate_text=req.candidate_text,
+            author=req.author,
+            node_type=NodeType(req.node_type.lower()) if req.node_type.lower() in NodeType._value2member_map_ else NodeType.CLAIM
+        )
+    except RuntimeError as e:
+        logger.error(f"/proposal/analyze LLM failure: {e}")
+        raise HTTPException(status_code=503, detail=f"LLM unavailable: {e}")
     return {
         "proposal_id": diff.proposal_id,
         "parent_id": diff.parent_id,

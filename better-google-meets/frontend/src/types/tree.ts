@@ -55,6 +55,7 @@ export interface SlateCard {
   intent: NodeType;
   createdAt: number;
   isStaged?: boolean;
+  extractedQuery?: string;
 }
 
 export interface EngineStatus {

@@ -3,7 +3,12 @@ import react from '@vitejs/plugin-react';
 
 // https://vitejs.dev/config/
 export default defineConfig({
+  base: './',
   plugins: [react()],
+  build: {
+    outDir: '../chrome-extension/dist',
+    emptyOutDir: true
+  },
   server: {
     port: 5173,
     host: true,
