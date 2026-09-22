@@ -1,0 +1,54 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-obsidian-950 text-slate-100;
+  }
+}
+
+/* Custom glassmorphism and card glow styles */
+.glass-panel {
+  background: rgba(17, 21, 32, 0.85);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.glass-card {
+  background: rgba(22, 27, 41, 0.8);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.ghost-sprout-node {
+  border: 2px dashed rgba(251, 191, 36, 0.8);
+  animation: ghostGlow 2.5s ease-in-out infinite alternate;
+}
+
+@keyframes ghostGlow {
+  0% {
+    box-shadow: 0 0 10px rgba(251, 191, 36, 0.2);
+    border-color: rgba(251, 191, 36, 0.5);
+  }
+  100% {
+    box-shadow: 0 0 25px rgba(251, 191, 36, 0.6);
+    border-color: rgba(251, 191, 36, 0.95);
+  }
+}
+
+/* Custom scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: rgba(12, 15, 23, 0.5);
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(45, 55, 79, 0.6);
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(56, 189, 248, 0.5);
+}
