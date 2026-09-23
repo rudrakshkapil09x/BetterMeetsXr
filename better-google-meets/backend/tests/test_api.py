@@ -140,13 +140,24 @@ def test_transcripts_and_batch_idea_extraction_endpoint(client):
     t_data = t_resp.json()
     assert t_data["total"] >= 2
 
-    # 3. Trigger batch idea extraction
+    # 3. Batch extraction without force_all: real-time /slate/ingest already turned both
+    # turns into cards and marked their transcripts extracted, so there's nothing left for
+    # the periodic batch pass to find. This is the fix, not a gap -- previously batch would
+    # re-derive and duplicate a card for everything real-time had already handled.
     batch_resp = client.post(f"/session/extract-ideas?meeting_id={meeting_id}")
     assert batch_resp.status_code == 200
     batch_data = batch_resp.json()
-    assert batch_data["status"] == "success"
-    assert batch_data["extracted_count"] > 0
-    assert len(batch_data["ideas"]) > 0
+    assert batch_data["status"] == "no_new_transcripts"
+    assert batch_data["extracted_count"] == 0
+
+    # 4. force_all=true is the deliberate override: re-scan everything regardless of the
+    # extracted flag, proving the underlying batch-extraction LLM path still works.
+    forced_resp = client.post(f"/session/extract-ideas?meeting_id={meeting_id}&force_all=true")
+    assert forced_resp.status_code == 200
+    forced_data = forced_resp.json()
+    assert forced_data["status"] == "success"
+    assert forced_data["extracted_count"] > 0
+    assert len(forced_data["ideas"]) > 0
 
 
 def test_agenda_endpoint_and_grounding(client):

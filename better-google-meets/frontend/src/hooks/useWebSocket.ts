@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { getBackendHost } from '../services/api';
 
 export interface WebSocketEvent {
   event: string;
@@ -17,14 +18,14 @@ export function useWebSocket(onEvent?: (event: WebSocketEvent) => void) {
   const wsRef = useRef<WebSocket | null>(null);
   const retryTimeoutRef = useRef<any>(null);
 
-  const connect = useCallback(() => {
+  const connect = useCallback(async () => {
     if (wsRef.current && (wsRef.current.readyState === WebSocket.OPEN || wsRef.current.readyState === WebSocket.CONNECTING)) {
       return;
     }
 
     const isExtension = window.location.protocol === 'chrome-extension:';
     const protocol = isExtension ? 'ws:' : (window.location.protocol === 'https:' ? 'wss:' : 'ws:');
-    const host = isExtension ? '127.0.0.1:8000' : window.location.host;
+    const host = await getBackendHost();
     const params = new URLSearchParams(window.location.search);
     const meetingId = params.get('meeting_id') || 'meet-session-01';
     const wsUrl = `${protocol}//${host}/ws?meeting_id=${encodeURIComponent(meetingId)}`;

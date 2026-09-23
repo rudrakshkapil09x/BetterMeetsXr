@@ -55,9 +55,8 @@ class LLMGateway:
     def __init__(self, http_client: Optional[httpx.AsyncClient] = None):
         self.cache = LRUCache(capacity=settings.LRU_CACHE_CAPACITY)
         self.active_provider = settings.ACTIVE_PROVIDER
-        self.last_latency_ms: Dict[str, float] = {"ollama": 0.0, "lm_studio": 0.0, "gemini_flash": 0.0}
-        self.provider_status: Dict[str, bool] = {"ollama": False, "lm_studio": False, "gemini_flash": False}
-        self.last_healthy_local_endpoint: Optional[str] = None
+        self.last_latency_ms: Dict[str, float] = {"lm_studio": 0.0, "gemini_flash": 0.0}
+        self.provider_status: Dict[str, bool] = {"lm_studio": False, "gemini_flash": False}
         self._external_client = http_client
         self._internal_client: Optional[httpx.AsyncClient] = None
         self._client_loop: Optional[asyncio.AbstractEventLoop] = None
@@ -192,16 +191,11 @@ class LLMGateway:
         self, prompt: str, system_prompt: str, temperature: float, max_tokens: int
     ) -> Tuple[str, bool, str]:
         """
-        Calls local LLM runtime with primary target LM Studio (port 1234).
+        Calls local LLM runtime: LM Studio only (port 1234). No proxy/fallback engines.
         """
         endpoints = [
             {"name": "lm_studio", "url": f"{settings.LM_STUDIO_URL}/chat/completions", "model": settings.LM_STUDIO_MODEL},
-            {"name": "ollama", "url": f"{settings.OLLAMA_URL}/chat/completions", "model": settings.OLLAMA_MODEL}
         ]
-
-        # Prioritize last healthy endpoint
-        if self.last_healthy_local_endpoint:
-            endpoints.sort(key=lambda ep: 0 if ep["name"] == self.last_healthy_local_endpoint else 1)
 
         client = await self.get_client()
         for ep in endpoints:
@@ -224,7 +218,6 @@ class LLMGateway:
                     data = resp.json()
                     content = data["choices"][0]["message"]["content"]
                     self.provider_status[ep["name"]] = True
-                    self.last_healthy_local_endpoint = ep["name"]
                     logger.info(f"Local LLM ({ep['name']}) call successful in {latency:.1f}ms")
                     return content, True, ep["name"]
                 else:

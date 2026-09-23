@@ -8,12 +8,27 @@
 (() => {
   console.log("[BetterGoogleMeets] Content script initialized on Google Meet.");
 
-  const BACKEND_URL = "http://localhost:8000";
+  const DEFAULT_BACKEND_URL = "http://127.0.0.1:8000";
+  // Configurable via the side panel's Settings modal (Backend Server field), so the same
+  // extension build works against a shared LAN host during beta testing, not just localhost.
+  let BACKEND_URL = DEFAULT_BACKEND_URL;
+  chrome.storage.sync.get({ backendUrl: DEFAULT_BACKEND_URL }, (items) => {
+    BACKEND_URL = items.backendUrl || DEFAULT_BACKEND_URL;
+  });
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area === "sync" && changes.backendUrl) {
+      BACKEND_URL = changes.backendUrl.newValue || DEFAULT_BACKEND_URL;
+    }
+  });
+
   let currentMeetingId = getMeetingId();
-  let activeTurnSpeaker = "Participant";
-  let activeTurnText = "";
   let currentSpeaker = "Participant";
-  let debounceTimer = null;
+  // Per-speaker debounce state (speaker -> { text, timer }), NOT a single shared slot.
+  // Meet's caption panel can show more than one speaker's row at once (the overlap window
+  // when someone cuts in before the previous line finalizes) -- a single shared "active
+  // turn" variable would let one speaker's in-progress state clobber another's, firing a
+  // premature, truncated dispatch for whoever got interrupted.
+  const activeTurns = new Map();
   const DEBOUNCE_DELAY_MS = 1800;
 
   function getMeetingId() {
@@ -21,10 +36,26 @@
     return path || "meet-session-01";
   }
 
+  // Tells background.js which meeting this tab is on so it can bind the side panel to the
+  // matching room (?meeting_id=...). chrome.tabs.onUpdated alone isn't reliable for this:
+  // the service worker goes dormant after ~30s idle, and if the tab is already sitting on
+  // an ongoing call when it next wakes (join, talk a while, then open the panel), onUpdated
+  // never fires again this session -- the panel would open on the wrong room with no error,
+  // while captions keep ingesting correctly into the real one. Sending this explicitly on
+  // load (and on navigation) closes that gap regardless of the service worker's lifecycle.
+  function syncMeetingIdToBackground() {
+    if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.sendMessage) {
+      chrome.runtime.sendMessage({ action: "SYNC_MEETING_ID", meeting_id: currentMeetingId }, () => {
+        void chrome.runtime.lastError; // no side panel open yet is expected; nothing to do
+      });
+    }
+  }
+
   // Update meeting ID if URL changes (SPA navigation)
   window.addEventListener("popstate", () => {
     currentMeetingId = getMeetingId();
     updateBadge();
+    syncMeetingIdToBackground();
   });
 
   // 1. Create floating status pill in Google Meet UI
@@ -310,33 +341,35 @@
     const turns = getActiveCaptionTurns();
     if (turns.length === 0) return;
 
+    const seenSpeakers = new Set();
+
     for (const turn of turns) {
       const { speaker, text } = turn;
       if (!text || text.length < 4) continue;
-
-      // If speaker changed and we have an un-dispatched turn for previous speaker
-      if (speaker !== activeTurnSpeaker && activeTurnText) {
-        if (!isUINoise(activeTurnText)) {
-          dispatchSpeechTurn(activeTurnSpeaker, activeTurnText);
-        }
-        activeTurnSpeaker = speaker;
-        activeTurnText = "";
-      }
-
-      activeTurnSpeaker = speaker;
+      seenSpeakers.add(speaker);
       currentSpeaker = speaker;
 
-      // If turn text evolved or expanded
-      if (text !== activeTurnText) {
-        activeTurnText = text;
-        flashBadge(speaker, activeTurnText);
-
-        if (debounceTimer) clearTimeout(debounceTimer);
-        debounceTimer = setTimeout(() => {
-          if (activeTurnText && !isUINoise(activeTurnText)) {
-            dispatchSpeechTurn(activeTurnSpeaker, activeTurnText);
-          }
+      const state = activeTurns.get(speaker);
+      if (!state || state.text !== text) {
+        if (state && state.timer) clearTimeout(state.timer);
+        flashBadge(speaker, text);
+        const timer = setTimeout(() => {
+          if (!isUINoise(text)) dispatchSpeechTurn(speaker, text);
+          activeTurns.delete(speaker);
         }, DEBOUNCE_DELAY_MS);
+        activeTurns.set(speaker, { text, timer });
+      }
+    }
+
+    // A speaker whose row disappeared from this pass (Meet finalized or dropped their
+    // line -- typically because someone else started talking) has finished their turn:
+    // flush it immediately instead of waiting out the debounce, so a real interruption
+    // doesn't get held back or silently lost when the row goes away before 1.8s is up.
+    for (const [speaker, state] of activeTurns) {
+      if (!seenSpeakers.has(speaker)) {
+        clearTimeout(state.timer);
+        if (!isUINoise(state.text)) dispatchSpeechTurn(speaker, state.text);
+        activeTurns.delete(speaker);
       }
     }
   }
@@ -360,9 +393,11 @@
     document.addEventListener("DOMContentLoaded", () => {
       injectStatusBadge();
       setupCaptionObserver();
+      syncMeetingIdToBackground();
     });
   } else {
     injectStatusBadge();
     setupCaptionObserver();
+    syncMeetingIdToBackground();
   }
 })();

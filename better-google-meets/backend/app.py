@@ -220,11 +220,19 @@ async def ingest_speech(req: SpeechIngestRequest):
         speaker=req.speaker,
         raw_transcript=req.transcript,
         agenda=agenda,
+        tree_context=dag.summarize_committed(),
         padding_context=padding_context
     )
 
     if card_info.get("is_noise"):
         logger.info(f"[/slate/ingest] Filtered noise from {req.speaker}: '{req.transcript[:50]}' -> {card_info.get('reason')}")
+        # Save it anyway, left unextracted: real-time filtration only sees one utterance
+        # plus a little padding, so something dismissed here may read as substantive to the
+        # periodic batch pass once it has the fuller surrounding dialogue. Previously a
+        # noise-filtered turn vanished entirely -- never in the transcript log, never
+        # reconsidered by anything -- which also meant the meeting's own chronological
+        # transcript was silently incomplete.
+        await db.save_transcript(meeting_id=meeting_id, speaker=req.speaker, text=req.transcript)
         return {
             "status": "ignored_noise",
             "speaker": req.speaker,
@@ -262,8 +270,13 @@ async def ingest_speech(req: SpeechIngestRequest):
                 distilled_text=card_info["distilled_text"],
                 intent=card_info["intent"]
             )
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"DB slate update failed for card {card_id_str}: {e}")
+
+        # This revision already has a real-time card (just updated above) -- mark it
+        # extracted immediately so the periodic batch pass doesn't re-derive and duplicate it.
+        transcript_id = await db.save_transcript(meeting_id=meeting_id, speaker=req.speaker, text=req.transcript)
+        await db.mark_transcripts_extracted([transcript_id])
 
         card_obj = {
             "id": card_id_str,
@@ -290,7 +303,7 @@ async def ingest_speech(req: SpeechIngestRequest):
         }
 
     # New distinct speech turn
-    await db.save_transcript(
+    transcript_id = await db.save_transcript(
         meeting_id=meeting_id,
         speaker=req.speaker,
         text=req.transcript
@@ -303,6 +316,14 @@ async def ingest_speech(req: SpeechIngestRequest):
         distilled_text=card_info["distilled_text"],
         intent=card_info["intent"]
     )
+
+    # A real-time card already exists for this turn -- mark it extracted immediately so the
+    # periodic batch pass (/session/extract-ideas) never re-derives and duplicates it. This
+    # is the fix for that duplication: previously every transcript row started and stayed
+    # unextracted until a batch run touched it, regardless of whether real-time had already
+    # made a card for it, so batch was guaranteed to re-create a card for everything real-time
+    # just handled.
+    await db.mark_transcripts_extracted([transcript_id])
 
     card_obj = {
         "id": f"card_{slate_id or int(time.time()*1000)}",
@@ -344,33 +365,58 @@ async def get_transcripts(meeting_id: str = Query("meet-session-01"), limit: int
     }
 
 
+_extraction_locks: Dict[str, asyncio.Lock] = {}
+
+
+def _get_extraction_lock(meeting_id: str) -> asyncio.Lock:
+    if meeting_id not in _extraction_locks:
+        _extraction_locks[meeting_id] = asyncio.Lock()
+    return _extraction_locks[meeting_id]
+
+
 @app.post("/session/extract-ideas")
 async def extract_session_ideas(
     meeting_id: str = Query("meet-session-01"),
     force_all: bool = Query(False)
 ):
     """
-    Periodic (e.g. 30-minute) or on-demand batch extraction:
+    Periodic (interval set client-side, currently 5m) or on-demand batch extraction:
     Extracts all substantive ideas, proposals, actions, and claims from the multi-speaker
     dialogue transcript, labels them with speaker attribution, saves them to the slate,
     and broadcasts to all peers in the room.
+
+    Every attendee's browser runs its own timer and can call this independently. Without
+    the lock below, two attendees' timers landing close together would both fetch the same
+    unextracted rows before either marked them done, and both create cards for them --
+    the same duplication bug this endpoint exists to avoid, just from a race instead of a
+    design gap. The lock makes the fetch-extract-mark sequence atomic per meeting: the
+    second call only proceeds once the first has fully finished, and finds nothing left.
     """
-    if force_all:
-        transcripts = await db.get_all_transcripts(meeting_id=meeting_id, limit=300)
-    else:
-        transcripts = await db.get_unextracted_transcripts(meeting_id=meeting_id, limit=300)
+    async with _get_extraction_lock(meeting_id):
+        if force_all:
+            transcripts = await db.get_all_transcripts(meeting_id=meeting_id, limit=300)
+        else:
+            transcripts = await db.get_unextracted_transcripts(meeting_id=meeting_id, limit=300)
 
-    if not transcripts:
-        return {
-            "status": "no_new_transcripts",
-            "extracted_count": 0,
-            "ideas": []
-        }
+        if not transcripts:
+            return {
+                "status": "no_new_transcripts",
+                "extracted_count": 0,
+                "ideas": []
+            }
 
+        return await _run_batch_extraction(meeting_id, transcripts)
+
+
+async def _run_batch_extraction(meeting_id: str, transcripts: List[Dict]) -> Dict:
     dag = await session_manager.get_or_create_dag(meeting_id)
     agenda = dag.nodes[dag.root_id].text if dag.root_id and dag.root_id in dag.nodes else None
 
-    ideas = await deliberation_engine.extract_batch_ideas(transcripts, agenda=agenda)
+    try:
+        ideas = await deliberation_engine.extract_batch_ideas(transcripts, agenda=agenda, tree_context=dag.summarize_committed())
+    except RuntimeError as e:
+        logger.error(f"/session/extract-ideas LLM failure: {e}")
+        raise HTTPException(status_code=503, detail=f"LLM unavailable: {e}")
 
     cards = []
     now_ms = time.time() * 1000
@@ -435,6 +481,7 @@ async def analyze_proposal(req: ProposalRequest):
     """
     Diffs candidate proposal branch against active Merkle DAG using topological ancestry.
     Returns trade-off analysis, alignment score, and Habermas compromise if conflicting.
+    The author's own approval is recorded immediately (a PR opens with the author's vote counted).
     """
     meeting_id = req.meeting_id or "meet-session-01"
     dag = await session_manager.get_or_create_dag(meeting_id)
@@ -463,8 +510,12 @@ async def analyze_proposal(req: ProposalRequest):
         "compromise_synthesis": diff.compromise_synthesis
     }
 
-    # Persist proposal diff in DB
+    # Persist proposal diff in DB, then record the author's own vote (a PR opens pre-approved by its author)
     await db.save_proposal_diff(result, meeting_id=meeting_id)
+    await db.record_vote(meeting_id, diff.proposal_id, req.author)
+
+    result["votes"] = [req.author]
+    result["required_votes"] = settings.REQUIRED_VOTES
 
     # Broadcast ghost sprout strictly to attendees in this meeting room
     await hub.broadcast(meeting_id, {
@@ -476,61 +527,69 @@ async def analyze_proposal(req: ProposalRequest):
     return result
 
 
-@app.post("/proposal/vote")
-async def vote_proposal(req: VoteRequest):
+@app.get("/proposals")
+async def get_pending_proposals(meeting_id: str = Query("meet-session-01")):
     """
-    Records a vote for a candidate ghost sprout and checks for consensus.
+    Returns every staged proposal (ghost sprout) not yet merged into the canonical tree,
+    with its live vote tally. Lets a freshly-opened or reconnected client rehydrate the
+    same pending proposals every other attendee sees -- no idea is ever silently dropped.
     """
-    meeting_id = req.meeting_id or "meet-session-01"
-    vote_count = await db.record_vote(meeting_id, req.proposal_id, req.voter)
-
-    await hub.broadcast(meeting_id, {
-        "event": "PROPOSAL_VOTED",
-        "proposal_id": req.proposal_id,
-        "voter": req.voter,
-        "vote_count": vote_count,
-        "timestamp": time.time()
-    })
-
+    pending = await db.get_pending_proposals(meeting_id)
     return {
-        "proposal_id": req.proposal_id,
-        "voter": req.voter,
-        "vote_count": vote_count,
-        "required_votes": settings.REQUIRED_VOTES
+        "meeting_id": meeting_id,
+        "required_votes": settings.REQUIRED_VOTES,
+        "proposals": [
+            {
+                "proposal_id": p["proposal_id"],
+                "parent_id": p["parent_id"],
+                "text": p["candidate_text"],
+                "author": p["author"],
+                "node_type": p["node_type"],
+                "has_conflict": bool(p["has_conflict"]),
+                "conflict_reason": p["conflict_reason"],
+                "trade_off_analysis": p["trade_off_analysis"],
+                "compromise_synthesis": p["compromise_synthesis"],
+                "votes": p["voters"],
+                "required_votes": settings.REQUIRED_VOTES
+            }
+            for p in pending
+        ]
     }
 
 
-@app.post("/proposal/merge")
-async def merge_proposal(req: MergeRequest):
+async def _commit_merge(
+    meeting_id: str,
+    proposal_id: str,
+    parent_id: str,
+    candidate_text: str,
+    author: str,
+    node_type_enum: NodeType,
+    additional_parents: Optional[List[str]] = None
+) -> Dict:
     """
-    Atomically commits approved proposal into the canonical Merkle DAG.
-    Broadcasts state mutation with new cryptographic SHA-256 hash to the meeting room.
+    Shared merge-and-broadcast path: atomically commits an approved proposal into the
+    canonical Merkle DAG, persists it, and broadcasts the mutation to the meeting room.
+    Used both by the manual /proposal/merge endpoint and by automatic consensus merges.
     """
-    meeting_id = req.meeting_id or "meet-session-01"
     dag = await session_manager.get_or_create_dag(meeting_id)
 
-    if req.parent_id not in dag.nodes:
+    if parent_id not in dag.nodes:
         raise HTTPException(
             status_code=404,
-            detail=f"Parent node '{req.parent_id}' does not exist in Merkle DAG."
+            detail=f"Parent node '{parent_id}' does not exist in Merkle DAG."
         )
-
-    clean_type = req.node_type.lower()
-    node_type_enum = NodeType(clean_type) if clean_type in NodeType._value2member_map_ else NodeType.CLAIM
 
     merged_node = deliberation_engine.merge_proposal(
         dag=dag,
-        proposal_id=req.proposal_id,
-        parent_id=req.parent_id,
-        candidate_text=req.candidate_text,
-        author=req.author,
+        proposal_id=proposal_id,
+        parent_id=parent_id,
+        candidate_text=candidate_text,
+        author=author,
         node_type=node_type_enum,
-        additional_parents=req.additional_parents
+        additional_parents=additional_parents
     )
 
-    # Persist updated Merkle DAG to SQLite
     await session_manager.persist_dag(dag)
-
     export = dag.export_json()
 
     await hub.broadcast(meeting_id, {
@@ -555,6 +614,76 @@ async def merge_proposal(req: MergeRequest):
         "state_hash": export["state_hash"],
         "revision": export["revision"]
     }
+
+
+@app.post("/proposal/vote")
+async def vote_proposal(req: VoteRequest):
+    """
+    Records a vote for a candidate ghost sprout. When the vote tally reaches the required
+    consensus threshold, the proposal is atomically merged into the canonical tree and every
+    attendee is notified via the same broadcast the manual merge path uses -- no separate
+    per-client decision, so two attendees can never race into a double merge.
+    """
+    meeting_id = req.meeting_id or "meet-session-01"
+    vote_count = await db.record_vote(meeting_id, req.proposal_id, req.voter)
+
+    merged_info = None
+    if vote_count >= settings.REQUIRED_VOTES:
+        # Atomic compare-and-set: only the request that actually flips merged 0->1 proceeds.
+        if await db.mark_proposal_merged(meeting_id, req.proposal_id):
+            diff = await db.get_proposal_diff(meeting_id, req.proposal_id)
+            if diff:
+                clean_type = str(diff.get("node_type") or "claim").lower()
+                node_type_enum = NodeType(clean_type) if clean_type in NodeType._value2member_map_ else NodeType.CLAIM
+                merged_info = await _commit_merge(
+                    meeting_id=meeting_id,
+                    proposal_id=req.proposal_id,
+                    parent_id=diff["parent_id"],
+                    candidate_text=diff["candidate_text"],
+                    author=diff["author"],
+                    node_type_enum=node_type_enum
+                )
+
+    await hub.broadcast(meeting_id, {
+        "event": "PROPOSAL_VOTED",
+        "proposal_id": req.proposal_id,
+        "voter": req.voter,
+        "vote_count": vote_count,
+        "merged": merged_info is not None,
+        "timestamp": time.time()
+    })
+
+    return {
+        "proposal_id": req.proposal_id,
+        "voter": req.voter,
+        "vote_count": vote_count,
+        "required_votes": settings.REQUIRED_VOTES,
+        "merged": merged_info is not None,
+        "merge_result": merged_info
+    }
+
+
+@app.post("/proposal/merge")
+async def merge_proposal(req: MergeRequest):
+    """
+    Manually commits an approved proposal into the canonical Merkle DAG (chair override /
+    testing path). Automatic consensus merges go through the same _commit_merge helper.
+    """
+    meeting_id = req.meeting_id or "meet-session-01"
+    clean_type = req.node_type.lower()
+    node_type_enum = NodeType(clean_type) if clean_type in NodeType._value2member_map_ else NodeType.CLAIM
+
+    await db.mark_proposal_merged(meeting_id, req.proposal_id)
+
+    return await _commit_merge(
+        meeting_id=meeting_id,
+        proposal_id=req.proposal_id,
+        parent_id=req.parent_id,
+        candidate_text=req.candidate_text,
+        author=req.author,
+        node_type_enum=node_type_enum,
+        additional_parents=req.additional_parents
+    )
 
 
 @app.get("/config/engine")

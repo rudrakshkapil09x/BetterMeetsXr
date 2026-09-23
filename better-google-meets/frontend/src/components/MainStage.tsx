@@ -1,15 +1,6 @@
-import React, { useMemo, useRef, useEffect, useState } from 'react';
+import React, { useMemo, useRef } from 'react';
 import { TreeSnapshot, GhostSprout, IdeaNode, NodeType } from '../types/tree';
-import {
-  GitBranch,
-  CheckCircle,
-  AlertTriangle,
-  RotateCcw,
-  ThumbsUp,
-  Scale,
-  Sparkles,
-  Target
-} from 'lucide-react';
+import { GitBranch, RotateCcw } from 'lucide-react';
 
 interface MainStageProps {
   tree: TreeSnapshot | null;
@@ -24,7 +15,7 @@ interface MainStageProps {
 
 // ── Layout constants ──────────────────────────────────────────────────────────
 const NODE_W = 240;
-const NODE_H = 96;
+const NODE_H = 92;
 const COL_GAP = 32;   // horizontal gap between sibling branches
 const ROW_GAP = 56;   // vertical gap between depth levels
 
@@ -51,16 +42,13 @@ function buildLayout(tree: TreeSnapshot): LayoutNode[] {
     const children = node.children_ids?.filter((cid) => tree.nodes[cid]) ?? [];
 
     if (children.length === 0) {
-      // Leaf: occupies one lane
       const lane = nextLane++;
       result.push({ node, x: lane * (NODE_W + COL_GAP) + NODE_W / 2, y: depth * (NODE_H + ROW_GAP), depth, lane });
       return lane;
     }
 
-    // Process children first to get their lanes
     const childLanes: number[] = children.map((cid) => dfs(cid, depth + 1));
 
-    // Centre parent over its children
     const minLane = Math.min(...childLanes);
     const maxLane = Math.max(...childLanes);
     const centreX = ((minLane + maxLane) / 2) * (NODE_W + COL_GAP) + NODE_W / 2;
@@ -73,30 +61,15 @@ function buildLayout(tree: TreeSnapshot): LayoutNode[] {
   return result;
 }
 
-// ── Node colour helpers ───────────────────────────────────────────────────────
-function nodeBorderColor(type: NodeType) {
-  switch (type) {
-    case 'goal':     return '#f59e0b';
-    case 'proposal': return '#f97316';
-    case 'claim':    return '#38bdf8';
-    case 'question': return '#a78bfa';
-    case 'action':   return '#34d399';
-    case 'evidence': return '#60a5fa';
-    default:         return '#94a3b8';
-  }
-}
-
-function nodeBgClass(type: NodeType) {
-  switch (type) {
-    case 'goal':     return 'border-amber-400 bg-amber-500/10 text-amber-200';
-    case 'proposal': return 'border-orange-400 bg-orange-500/10 text-orange-200';
-    case 'claim':    return 'border-sky-400 bg-sky-500/10 text-sky-200';
-    case 'question': return 'border-purple-400 bg-purple-500/10 text-purple-200';
-    case 'action':   return 'border-emerald-400 bg-emerald-500/10 text-emerald-200';
-    case 'evidence': return 'border-blue-400 bg-blue-500/10 text-blue-200';
-    default:         return 'border-slate-400 bg-slate-500/10 text-slate-200';
-  }
-}
+const NODE_TYPE_LABEL: Record<NodeType, string> = {
+  goal: 'agenda',
+  topic: 'topic',
+  claim: 'claim',
+  question: 'question',
+  evidence: 'evidence',
+  action: 'action',
+  proposal: 'proposal',
+};
 
 // ── Component ─────────────────────────────────────────────────────────────────
 export const MainStage: React.FC<MainStageProps> = ({
@@ -131,7 +104,7 @@ export const MainStage: React.FC<MainStageProps> = ({
 
   // SVG connector paths: for each node, draw a Bezier from parent bottom-centre to child top-centre
   const connectorPaths = useMemo(() => {
-    const paths: Array<{ d: string; color: string; key: string }> = [];
+    const paths: Array<{ d: string; key: string }> = [];
     layout.forEach((ln) => {
       const { node } = ln;
       const childIds = node.children_ids?.filter((cid) => byId[cid]) ?? [];
@@ -144,7 +117,7 @@ export const MainStage: React.FC<MainStageProps> = ({
         const y2 = child.y;
         const midY = (y1 + y2) / 2;
         const d = `M${x1},${y1} C${x1},${midY} ${x2},${midY} ${x2},${y2}`;
-        paths.push({ d, color: nodeBorderColor(child.node.node_type), key: `${node.id}->${cid}` });
+        paths.push({ d, key: `${node.id}->${cid}` });
       });
     });
     return paths;
@@ -152,8 +125,8 @@ export const MainStage: React.FC<MainStageProps> = ({
 
   if (!tree) {
     return (
-      <div className="flex-1 flex items-center justify-center bg-obsidian-950 text-slate-500 text-sm">
-        Loading...
+      <div className="flex-1 flex items-center justify-center bg-ink-950 text-ash-400 text-sm">
+        Loading…
       </div>
     );
   }
@@ -161,18 +134,18 @@ export const MainStage: React.FC<MainStageProps> = ({
   const rootNode = tree.nodes[tree.root_id || 'node_0000'];
 
   return (
-    <div className="flex-1 flex flex-col h-full bg-obsidian-950 overflow-hidden">
+    <div className="flex-1 flex flex-col h-full bg-ink-950 overflow-hidden">
       {/* ── Header ── */}
-      <div className="flex items-center justify-between px-4 md:px-6 py-3 border-b border-obsidian-800/80 flex-shrink-0">
+      <div className="flex items-center justify-between px-4 md:px-6 py-3 border-b border-ink-700 flex-shrink-0">
         <div className="flex items-center gap-2">
-          <h1 className="text-sm font-bold text-slate-100 flex items-center gap-1.5">
-            <GitBranch className="w-4 h-4 text-amber-400" />
+          <h1 className="text-sm font-semibold text-[#e8e6e1] flex items-center gap-1.5">
+            <GitBranch className="w-4 h-4 text-ash-300" />
             Arbor
           </h1>
-          <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-obsidian-800 text-slate-400 border border-obsidian-700">
-            #{tree.revision}
+          <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-ink-800 text-ash-400 border border-ink-600">
+            rev {tree.revision}
           </span>
-          <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-obsidian-800 text-slate-400 border border-obsidian-700">
+          <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-ink-800 text-ash-400 border border-ink-600">
             {Object.keys(tree.nodes).length} nodes
           </span>
         </div>
@@ -181,18 +154,17 @@ export const MainStage: React.FC<MainStageProps> = ({
           {onOpenAgenda && (
             <button
               onClick={onOpenAgenda}
-              className="flex items-center gap-1.5 px-2.5 py-1 text-xs text-sky-300 bg-sky-950/60 hover:bg-sky-900/60 border border-sky-700/50 rounded-lg transition"
+              className="px-2.5 py-1 text-xs text-ash-300 hover:text-[#e8e6e1] border border-ink-600 hover:border-ash-400 rounded transition"
             >
-              <Target className="w-3 h-3 text-amber-400" />
               Agenda
             </button>
           )}
           <button
             onClick={() => {
-              const title = prompt('Goal:', 'Discussion');
+              const title = prompt('New agenda:', 'Discussion');
               if (title) onResetMeeting(title);
             }}
-            className="flex items-center gap-1 px-2.5 py-1 text-xs text-slate-300 bg-obsidian-900 hover:bg-obsidian-800 border border-obsidian-700 rounded-lg transition"
+            className="flex items-center gap-1 px-2.5 py-1 text-xs text-ash-300 hover:text-[#e8e6e1] border border-ink-600 hover:border-ash-400 rounded transition"
           >
             <RotateCcw className="w-3 h-3" />
             Reset
@@ -202,22 +174,15 @@ export const MainStage: React.FC<MainStageProps> = ({
 
       {/* ── Agenda Banner ── */}
       {rootNode && (
-        <div className="mx-4 mt-3 mb-2 p-3 rounded-xl bg-gradient-to-r from-sky-950/40 via-obsidian-900 to-obsidian-950 border border-sky-800/30 flex items-center justify-between gap-3 flex-shrink-0">
-          <div className="flex items-center gap-2.5">
-            <div className="w-7 h-7 rounded-lg bg-sky-500/20 text-sky-400 flex items-center justify-center flex-shrink-0">
-              <Target className="w-4 h-4" />
-            </div>
-            <div>
-              <span className="text-[10px] font-semibold text-sky-400 uppercase tracking-wider block">
-                Deliberation Objective
-              </span>
-              <p className="text-xs font-medium text-slate-200 line-clamp-1">{rootNode.text}</p>
-            </div>
+        <div className="mx-4 mt-3 mb-2 px-3 py-2.5 rounded border border-ink-600 flex items-center justify-between gap-3 flex-shrink-0">
+          <div className="min-w-0">
+            <span className="text-[10px] text-ash-400 block">Agenda</span>
+            <p className="text-xs font-medium text-[#e8e6e1] line-clamp-1">{rootNode.text}</p>
           </div>
           {onOpenAgenda && (
             <button
               onClick={onOpenAgenda}
-              className="text-[11px] text-slate-400 hover:text-sky-300 underline underline-offset-2 flex-shrink-0 transition"
+              className="text-[11px] text-ash-400 hover:text-[#e8e6e1] flex-shrink-0 transition"
             >
               Change
             </button>
@@ -234,31 +199,13 @@ export const MainStage: React.FC<MainStageProps> = ({
           <svg
             style={{ position: 'absolute', top: 0, left: 0, width: canvasW, height: canvasH, pointerEvents: 'none', overflow: 'visible' }}
           >
-            <defs>
-              {connectorPaths.map((cp) => (
-                <marker
-                  key={`arrow-${cp.key}`}
-                  id={`arrow-${cp.key}`}
-                  markerWidth="6"
-                  markerHeight="6"
-                  refX="3"
-                  refY="3"
-                  orient="auto"
-                >
-                  <path d="M0,0 L6,3 L0,6 Z" fill={cp.color} opacity="0.7" />
-                </marker>
-              ))}
-            </defs>
             {connectorPaths.map((cp) => (
               <path
                 key={cp.key}
                 d={cp.d}
                 fill="none"
-                stroke={cp.color}
+                stroke="#2a2c30"
                 strokeWidth="1.5"
-                strokeOpacity="0.55"
-                strokeDasharray="none"
-                markerEnd={`url(#arrow-${cp.key})`}
               />
             ))}
           </svg>
@@ -267,8 +214,7 @@ export const MainStage: React.FC<MainStageProps> = ({
           {layout.map((ln) => {
             const { node } = ln;
             const isSelected = selectedParentId === node.id;
-            const colorClass = nodeBgClass(node.node_type);
-            const borderColor = nodeBorderColor(node.node_type);
+            const isRoot = node.id === tree.root_id;
 
             return (
               <div
@@ -281,30 +227,25 @@ export const MainStage: React.FC<MainStageProps> = ({
                   width: NODE_W,
                   height: NODE_H,
                 }}
-                className={`rounded-xl border-2 transition cursor-pointer select-none glass-card ${colorClass} ${
-                  isSelected
-                    ? 'ring-2 ring-sky-400 ring-offset-2 ring-offset-obsidian-950 scale-[1.03] z-10'
-                    : 'hover:border-slate-400/60'
-                }`}
+                className={`rounded border bg-ink-800 transition cursor-pointer select-none ${
+                  isSelected ? 'border-[#e8e6e1]' : 'border-ink-600 hover:border-ash-400'
+                } ${isRoot ? 'border-l-4' : ''}`}
               >
                 <div className="p-2.5 h-full flex flex-col justify-between">
-                  <div className="flex items-center justify-between mb-1">
-                    <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-obsidian-900/80 border border-white/10 truncate max-w-[100px]">
+                  <div className="flex items-center justify-between mb-1 gap-1">
+                    <span className="text-[9px] font-mono text-ash-400 truncate">
                       {node.id}
                     </span>
-                    <span
-                      className="text-[9px] uppercase font-bold tracking-wider px-1.5 py-0.5 rounded"
-                      style={{ background: `${borderColor}22`, color: borderColor }}
-                    >
-                      {node.node_type}
+                    <span className="text-[9px] font-mono text-ash-400 flex-shrink-0">
+                      {NODE_TYPE_LABEL[node.node_type]}
                     </span>
                   </div>
 
-                  <p className="text-xs font-medium text-slate-100 leading-snug line-clamp-2 flex-1 my-1">
+                  <p className="text-xs font-medium text-[#e8e6e1] leading-snug line-clamp-2 flex-1 my-1">
                     {node.text}
                   </p>
 
-                  <div className="flex items-center justify-between text-[9px] text-slate-500 pt-1 border-t border-white/5">
+                  <div className="flex items-center justify-between text-[9px] text-ash-400 pt-1 border-t border-ink-700">
                     <span className="truncate max-w-[120px]">{node.author}</span>
                     <span className="font-mono text-[8px]">
                       {node.content_hash ? `#${node.content_hash.substring(0, 6)}` : ''}
@@ -313,22 +254,21 @@ export const MainStage: React.FC<MainStageProps> = ({
                 </div>
 
                 {isSelected && (
-                  <div className="absolute -top-2 -right-2 bg-sky-500 text-white text-[9px] font-bold px-2 py-0.5 rounded-full shadow z-20">
-                    TARGET
+                  <div className="absolute -top-2 -right-2 bg-[#e8e6e1] text-ink-950 text-[9px] font-semibold px-1.5 py-0.5 rounded shadow z-20">
+                    target
                   </div>
                 )}
               </div>
             );
           })}
 
-          {/* Ghost Sprouts (proposals) rendered below the tree */}
+          {/* Ghost Sprouts (staged proposals awaiting votes) rendered below the tree */}
           {ghostSprouts.length > 0 && (
             <div
               style={{ position: 'absolute', top: canvasH + 16, left: 0, width: Math.max(canvasW, 480) }}
             >
-              <h2 className="text-xs font-semibold text-amber-400 uppercase tracking-wider mb-3 flex items-center gap-1.5">
-                <Sparkles className="w-3.5 h-3.5 text-amber-400" />
-                Proposals ({ghostSprouts.length})
+              <h2 className="text-xs font-semibold text-[#e8e6e1] mb-3">
+                Open proposals ({ghostSprouts.length})
               </h2>
               <div className="space-y-3">
                 {ghostSprouts.map((ghost) => {
@@ -337,74 +277,63 @@ export const MainStage: React.FC<MainStageProps> = ({
                   return (
                     <div
                       key={ghost.proposal_id}
-                      className="p-4 rounded-xl border-2 border-dashed border-amber-400/80 bg-amber-500/5 glass-panel shadow-lg transition"
+                      className={`p-4 rounded border-2 border-dashed bg-ink-800 transition ${
+                        ghost.has_conflict ? 'border-conflict' : 'border-pending'
+                      }`}
                     >
                       <div className="flex items-center justify-between gap-2 mb-2">
-                        <div className="flex items-center gap-1.5 text-xs text-slate-300">
-                          <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                        <div className="flex items-center gap-1.5 text-xs text-ash-300">
+                          <span className="font-mono text-[10px] text-ash-400">
                             {ghost.proposal_id}
                           </span>
                           <span>
-                            <b>{ghost.author}</b> • {ghost.parent_id}
+                            {ghost.author} → {ghost.parent_id}
                           </span>
                         </div>
                         <span
-                          className={`text-[10px] px-2 py-0.5 rounded-full font-semibold border ${
-                            ghost.has_conflict
-                              ? 'bg-red-500/20 text-red-300 border-red-500/40'
-                              : 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                          className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${
+                            ghost.has_conflict ? 'text-conflict' : 'text-ash-400'
                           }`}
                         >
-                          {ghost.has_conflict ? 'Conflict' : `${(ghost.alignment_score * 100).toFixed(0)}% Match`}
+                          {ghost.has_conflict ? 'conflict' : `${(ghost.alignment_score * 100).toFixed(0)}% aligned`}
                         </span>
                       </div>
 
-                      <p className="text-sm font-semibold text-slate-100 mb-2">"{ghost.text}"</p>
+                      <p className="text-sm font-medium text-[#e8e6e1] mb-2">{ghost.text}</p>
 
-                      <div className="bg-obsidian-900/90 border border-obsidian-700/80 rounded-lg p-2.5 text-xs space-y-1 mb-3">
-                        <div className="flex items-start gap-2 text-slate-300">
-                          <Scale className="w-3.5 h-3.5 text-amber-400 shrink-0 mt-0.5" />
-                          <p className="leading-relaxed">{ghost.trade_off_analysis}</p>
-                        </div>
+                      <div className="bg-ink-900 border border-ink-700 rounded p-2.5 text-xs mb-3">
+                        <p className="text-ash-300 leading-relaxed">{ghost.trade_off_analysis}</p>
                         {ghost.has_conflict && (
-                          <p className="text-red-300 font-medium flex items-center gap-1.5 pt-0.5">
-                            <AlertTriangle className="w-3 h-3 text-red-400 shrink-0" />
+                          <p className="text-conflict font-medium pt-1.5">
                             {ghost.conflict_reason}
                           </p>
                         )}
                       </div>
 
                       {ghost.compromise_synthesis && (
-                        <div className="mb-3 bg-purple-950/40 border border-purple-500/40 rounded-lg p-2.5 text-xs">
-                          <div className="flex items-start gap-1.5 text-purple-200">
-                            <Sparkles className="w-3.5 h-3.5 text-purple-400 shrink-0 mt-0.5" />
-                            <div>
-                              <span className="font-semibold text-purple-300 mr-1">Synthesis:</span>
-                              <span className="italic">"{ghost.compromise_synthesis}"</span>
-                            </div>
-                          </div>
+                        <div className="mb-3 bg-ink-900 border border-ink-700 rounded p-2.5 text-xs">
+                          <span className="font-medium text-[#e8e6e1] mr-1">Suggested compromise:</span>
+                          <span className="text-ash-300">{ghost.compromise_synthesis}</span>
                         </div>
                       )}
 
-                      <div className="flex items-center justify-between pt-2.5 border-t border-white/10 text-xs">
+                      <div className="flex items-center justify-between pt-2.5 border-t border-ink-700 text-xs">
                         <div className="flex items-center gap-2">
                           <div className="flex items-center gap-1">
                             {Array.from({ length: ghost.requiredVotes }).map((_, i) => (
                               <div
                                 key={i}
-                                className={`w-3 h-3 rounded-full border transition ${
-                                  i < voteCount
-                                    ? 'bg-amber-400 border-amber-300'
-                                    : 'bg-obsidian-800 border-obsidian-600'
+                                className={`w-3 h-3 rounded-full border ${
+                                  i < voteCount ? 'bg-pending border-pending' : 'border-ink-600'
                                 }`}
                               />
                             ))}
                           </div>
-                          <span className="font-mono text-amber-300">
+                          <span className="font-mono text-ash-300">
                             {voteCount}/{ghost.requiredVotes}
                           </span>
                           {ghost.votes.length > 0 && (
-                            <span className="text-[10px] text-slate-500">
+                            <span className="text-[10px] text-ash-400">
                               ({ghost.votes.join(', ')})
                             </span>
                           )}
@@ -413,14 +342,13 @@ export const MainStage: React.FC<MainStageProps> = ({
                         <button
                           onClick={() => onVote(ghost.proposal_id, currentVoter)}
                           disabled={hasVoted || ghost.isMerging}
-                          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition shadow ${
+                          className={`px-3 py-1.5 rounded text-xs font-medium border transition ${
                             hasVoted
-                              ? 'bg-obsidian-800 text-slate-500 border border-obsidian-700 cursor-not-allowed'
-                              : 'bg-amber-500 hover:bg-amber-400 text-obsidian-950'
+                              ? 'text-ash-400 border-ink-600 cursor-not-allowed'
+                              : 'text-[#e8e6e1] border-ash-400 hover:bg-ink-700'
                           }`}
                         >
-                          <ThumbsUp className="w-3 h-3" />
-                          {ghost.isMerging ? 'Merging...' : hasVoted ? 'Voted' : 'Approve'}
+                          {ghost.isMerging ? 'Merging…' : hasVoted ? 'Voted' : `Vote as ${currentVoter}`}
                         </button>
                       </div>
                     </div>

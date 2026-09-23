@@ -52,11 +52,14 @@ class DeliberationEngine:
         speaker: str,
         raw_transcript: str,
         agenda: Optional[str] = None,
-        padding_context: Optional[List[Dict[str, str]]] = None
+        padding_context: Optional[List[Dict[str, str]]] = None,
+        tree_context: Optional[str] = None
     ) -> Dict:
         """
         Converts raw verbal transcript into a clean, typed epistemic card with extracted query,
-        optionally grounded in the meeting agenda/motive and surrounding dialogue padding so no idea is cut off.
+        grounded in the meeting agenda/motive, surrounding dialogue padding (so no idea is cut
+        off), and what's already been committed to the tree (so this doesn't re-propose or
+        contradict something already decided without knowing it).
         """
         # 1. Quick lexical pre-filter for instant rejection of obvious greetings/audio checks
         if is_noise(raw_transcript):
@@ -70,6 +73,11 @@ class DeliberationEngine:
             }
 
         agenda_context = f"\nMeeting Agenda / Motive: \"{agenda}\"" if agenda and agenda.strip() and agenda != "Discussion" else ""
+        tree_context_str = (
+            f"\nAlready decided or on the table this meeting:\n{tree_context}\n"
+            if tree_context and tree_context.strip() and tree_context != "(nothing decided yet)"
+            else ""
+        )
         padding_context_str = ""
         if padding_context:
             context_turns = [
@@ -86,13 +94,16 @@ class DeliberationEngine:
 
         system_prompt = (
             "You are an epistemic knowledge filter and query extractor for collaborative meeting deliberation.\n"
-            f"{agenda_context}\n"
+            f"{agenda_context}"
+            f"{tree_context_str}\n"
             "Analyze the spoken user utterance along with the speaker label. "
-            "Use the recent dialogue padding so ideas aren't missed or cut off by mid-speech pauses.\n"
+            "Use the recent dialogue padding so ideas aren't missed or cut off by mid-speech pauses. "
+            "Use what's already decided so you don't re-flag a plain restatement of an existing decision as a new one.\n"
             "CRITICAL RULES FOR EXTRACTION:\n"
             "1. NOISE (is_noise: true):\n"
             "   - Small talk, pleasantries, greetings, broken disfluent muttering with no coherent proposition or query.\n"
             "   - Meta-chatter about audio, video, or testing (e.g. 'can you hear me', 'text to extract').\n"
+            "   - A plain restatement of something already listed as decided, with no new content.\n"
             "2. SUBSTANTIVE (is_noise: false):\n"
             "   - Definite proposals, technical claims, decisions, meaningful questions, action items, or evidence.\n"
             "   - Formulate 'distilled_text': ONE crisp, authoritative proposition sentence.\n"
@@ -113,11 +124,16 @@ class DeliberationEngine:
             f"Utterance: \"{raw_transcript}\""
         )
 
+        # max_tokens is generous on purpose: reasoning-style local models (e.g. Gemma's
+        # E2B/E4B) emit a hidden chain-of-thought before the JSON answer, and a tight cap
+        # tuned only for a direct-answer model (Qwen) truncates them before they ever write
+        # the answer -- which silently misclassifies everything as noise, not an error.
+        # A generous cap costs Qwen nothing since it stops at its own end-of-response token.
         raw_resp, provider = await self.gateway.generate(
             prompt=prompt,
             system_prompt=system_prompt,
             temperature=0.1,
-            max_tokens=150
+            max_tokens=500
         )
         data = self.gateway._extract_json(raw_resp)
 
@@ -155,11 +171,13 @@ class DeliberationEngine:
             "provider_used": provider
         }
 
-    async def extract_batch_ideas(self, transcripts: List[Dict], agenda: Optional[str] = None) -> List[Dict]:
+    async def extract_batch_ideas(
+        self, transcripts: List[Dict], agenda: Optional[str] = None, tree_context: Optional[str] = None
+    ) -> List[Dict]:
         """
         Extracts all substantive ideas, proposals, actions, and claims from a chronological
-        multi-speaker dialogue transcript (e.g. accumulated over 30 minutes),
-        grounded in the meeting agenda/motive.
+        multi-speaker dialogue transcript (e.g. accumulated over 30 minutes), grounded in the
+        meeting agenda/motive and what's already been committed to the tree.
         """
         if not transcripts:
             return []
@@ -179,13 +197,19 @@ class DeliberationEngine:
 
         dialogue_text = "\n".join(formatted_lines)
         agenda_clause = f"\nMeeting Agenda / Motive: \"{agenda}\"\nFocus on ideas, proposals, decisions, and claims relevant to this agenda.\n" if agenda and agenda.strip() and agenda != "Discussion" else "\n"
+        tree_clause = (
+            f"\nAlready decided or on the table this meeting -- do not re-extract these as new:\n{tree_context}\n"
+            if tree_context and tree_context.strip() and tree_context != "(nothing decided yet)"
+            else ""
+        )
 
         system_prompt = (
             "You are an executive epistemic intelligence engine for video meetings."
             f"{agenda_clause}"
+            f"{tree_clause}"
             "Analyze the multi-speaker dialogue transcript below. "
             "Identify and extract every distinct substantive idea, proposal, decision, action item, or core claim made by the participants. "
-            "Ignore small talk, greetings, filler utterances, and repetitions. "
+            "Ignore small talk, greetings, filler utterances, repetitions, and plain restatements of what's already decided. "
             "Return JSON only: a JSON array of objects with keys:\n"
             "[\n"
             "  {\n"
@@ -204,7 +228,7 @@ class DeliberationEngine:
             prompt=prompt,
             system_prompt=system_prompt,
             temperature=0.2,
-            max_tokens=600
+            max_tokens=1000
         )
 
         extracted = []
@@ -239,19 +263,8 @@ class DeliberationEngine:
                             })
 
         except Exception as e:
-            logger.warning(f"Failed to parse batch ideas JSON: {e}")
-
-        # Fallback heuristic if LLM response couldn't be parsed
-        if not extracted and clean_turns:
-            for t in clean_turns[:6]:
-                extracted.append({
-                    "speaker": t["speaker"],
-                    "text": t["text"],
-                    "intent": "proposal" if any(w in t["text"].lower() for w in ["propose", "should", "adopt", "migrate"]) else "claim",
-                    "extracted_query": f"Query: {t['text'][:40]}",
-                    "rationale": "Extracted from meeting speech"
-                })
-
+            logger.error(f"Failed to parse batch ideas JSON from LLM: {e}")
+            raise RuntimeError(f"LLM returned unparseable JSON for batch idea extraction: {e}")
 
         return extracted
 
@@ -317,7 +330,7 @@ class DeliberationEngine:
             prompt=prompt,
             system_prompt=system_prompt,
             temperature=0.15,
-            max_tokens=180
+            max_tokens=500
         )
         data = self.gateway._extract_json(raw_resp)
 
@@ -379,11 +392,11 @@ class DeliberationEngine:
         if action == "knead":
             system_prompt = "You are a text compression engine. Condense the input into a single sharp 5-10 word statement. Return text only."
             prompt = f"Text: {text}"
-            res, _ = await self.gateway.generate(prompt, system_prompt, max_tokens=40)
+            res, _ = await self.gateway.generate(prompt, system_prompt, max_tokens=300)
             return res.strip()
         elif action == "stretch":
             system_prompt = "You are an idea elaboration engine. Expand the input with concrete implementation details and rationale in 2 concise sentences. Return text only."
             prompt = f"Text: {text}"
-            res, _ = await self.gateway.generate(prompt, system_prompt, max_tokens=100)
+            res, _ = await self.gateway.generate(prompt, system_prompt, max_tokens=400)
             return res.strip()
         return text

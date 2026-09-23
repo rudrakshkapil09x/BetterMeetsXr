@@ -7,33 +7,29 @@ export default {
   darkMode: 'class',
   theme: {
     extend: {
+      fontFamily: {
+        sans: ['"IBM Plex Sans"', 'system-ui', 'sans-serif'],
+        mono: ['"JetBrains Mono"', 'ui-monospace', 'monospace'],
+      },
       colors: {
-        obsidian: {
-          950: '#07090e',
-          900: '#0c0f17',
-          850: '#111520',
-          800: '#161b29',
-          700: '#20273a',
-          600: '#2d374f',
+        // True-neutral dark surfaces -- no blue tint, no glass.
+        ink: {
+          950: '#0d0e10',
+          900: '#131417',
+          800: '#17181b',
+          700: '#202226',
+          600: '#2a2c30',
         },
-        intent: {
-          claim: '#38bdf8',    // Cyan
-          proposal: '#fbbf24', // Amber/Gold
-          question: '#c084fc', // Purple
-          action: '#4ade80',   // Green
-          evidence: '#60a5fa', // Blue
-        }
+        ash: {
+          400: '#8b8d92',
+          300: '#a6a8ad',
+        },
+        // The only three colors that carry meaning, reused from git's own conventions:
+        // a change is pending, merged, or in conflict. Never used decoratively elsewhere.
+        merged: '#4f9d69',
+        pending: '#c9a227',
+        conflict: '#c0564d',
       },
-      animation: {
-        'pulse-subtle': 'pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite',
-        'ghost-glow': 'ghostGlow 2.5s ease-in-out infinite alternate',
-      },
-      keyframes: {
-        ghostGlow: {
-          '0%': { boxShadow: '0 0 10px rgba(251, 191, 36, 0.25)', borderColor: 'rgba(251, 191, 36, 0.4)' },
-          '100%': { boxShadow: '0 0 24px rgba(251, 191, 36, 0.6)', borderColor: 'rgba(251, 191, 36, 0.9)' },
-        }
-      }
     },
   },
   plugins: [],

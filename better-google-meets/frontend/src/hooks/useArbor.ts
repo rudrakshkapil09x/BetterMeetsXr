@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { TreeSnapshot, GhostSprout, IdeaNode, ProposalDiff, NodeType, SlateCard } from '../types/tree';
-import { getTree, getSpeechSlates, analyzeProposal, mergeProposal, resetTree as apiResetTree } from '../services/api';
+import { getTree, getSpeechSlates, getPendingProposals, analyzeProposal, voteProposal, resetTree as apiResetTree } from '../services/api';
 import { useWebSocket, WebSocketEvent } from './useWebSocket';
 
 export function useArbor() {
@@ -72,16 +72,31 @@ export function useArbor() {
         return next;
       });
     } else if (event.event === 'GHOST_SPROUT_STAGED' && event.data) {
-      const diff: ProposalDiff = event.data;
+      const diff: ProposalDiff & { votes?: string[]; required_votes?: number } = event.data;
       setGhostSprouts((prev) => ({
         ...prev,
         [diff.proposal_id]: {
           ...diff,
-          votes: [diff.author], // Proposer votes by default
-          requiredVotes: 3,
+          votes: diff.votes ?? [diff.author],
+          requiredVotes: diff.required_votes ?? 3,
           isMerging: false
         }
       }));
+    } else if (event.event === 'PROPOSAL_VOTED') {
+      // Server-authoritative vote tally, broadcast to every attendee -- this is what makes
+      // voting actually shared across browsers instead of a per-tab illusion.
+      const { proposal_id, voter, merged } = event as any;
+      setGhostSprouts((prev) => {
+        const ghost = prev[proposal_id];
+        if (!ghost) return prev;
+        if (merged) {
+          const next = { ...prev };
+          delete next[proposal_id];
+          return next;
+        }
+        const votes = ghost.votes.includes(voter) ? ghost.votes : [...ghost.votes, voter];
+        return { ...prev, [proposal_id]: { ...ghost, votes } };
+      });
     } else if (event.event === 'TREE_RESET' && event.data) {
       setTree(event.data);
       setGhostSprouts({});
@@ -94,14 +109,24 @@ export function useArbor() {
   const fetchInitialTree = useCallback(async () => {
     try {
       setIsLoading(true);
-      const [treeData, slatesData] = await Promise.all([
+      const [treeData, slatesData, proposalsData] = await Promise.all([
         getTree().catch((e) => { console.error(e); return null; }),
-        getSpeechSlates().catch((e) => { console.error(e); return { cards: [] }; })
+        getSpeechSlates().catch((e) => { console.error(e); return { cards: [] }; }),
+        getPendingProposals().catch((e) => { console.error(e); return { proposals: [] }; })
       ]);
       if (treeData) setTree(treeData);
       if (slatesData && slatesData.cards) setSlateCards(slatesData.cards);
+      // Rehydrate every still-pending proposal so a refresh or a newly-joined attendee
+      // sees the exact same open ideas everyone else does -- nothing gets silently dropped.
+      if (proposalsData && proposalsData.proposals) {
+        const hydrated: Record<string, GhostSprout> = {};
+        for (const p of proposalsData.proposals) {
+          hydrated[p.proposal_id] = { ...p, votes: p.votes, requiredVotes: p.required_votes, isMerging: false };
+        }
+        setGhostSprouts(hydrated);
+      }
     } catch (e) {
-      console.error('Failed to load initial tree & slates:', e);
+      console.error('Failed to load initial tree, slates & proposals:', e);
     } finally {
       setIsLoading(false);
     }
@@ -118,11 +143,14 @@ export function useArbor() {
     nodeType: NodeType = 'proposal'
   ) => {
     try {
+      // Backend records the author's own approval vote and returns the real tally --
+      // don't assume it client-side, since REQUIRED_VOTES and the author's vote are
+      // both server state.
       const diff = await analyzeProposal(parentId, text, author, nodeType);
       const newGhost: GhostSprout = {
         ...diff,
-        votes: [author],
-        requiredVotes: 3,
+        votes: diff.votes,
+        requiredVotes: diff.required_votes,
         isMerging: false
       };
       setGhostSprouts((prev) => ({
@@ -138,39 +166,37 @@ export function useArbor() {
 
   const castVote = useCallback(async (proposalId: string, voterName: string) => {
     const ghost = ghostSprouts[proposalId];
-    if (!ghost || ghost.isMerging) return;
+    if (!ghost || ghost.isMerging || ghost.votes.includes(voterName)) return;
 
-    const currentVotes = new Set(ghost.votes);
-    currentVotes.add(voterName);
-    const updatedVotes = Array.from(currentVotes);
+    setGhostSprouts((prev) => {
+      const g = prev[proposalId];
+      return g ? { ...prev, [proposalId]: { ...g, isMerging: true } } : prev;
+    });
 
-    // If consensus threshold reached (e.g. 3 votes)
-    if (updatedVotes.length >= ghost.requiredVotes) {
-      setGhostSprouts((prev) => ({
-        ...prev,
-        [proposalId]: { ...ghost, votes: updatedVotes, isMerging: true }
-      }));
-
-      try {
-        await mergeProposal(
-          ghost.proposal_id,
-          ghost.parent_id,
-          ghost.text,
-          ghost.author,
-          ghost.node_type
-        );
-      } catch (e) {
-        console.error('Failed to merge proposal upon consensus:', e);
-        setGhostSprouts((prev) => ({
-          ...prev,
-          [proposalId]: { ...ghost, votes: updatedVotes, isMerging: false }
-        }));
-      }
-    } else {
-      setGhostSprouts((prev) => ({
-        ...prev,
-        [proposalId]: { ...ghost, votes: updatedVotes }
-      }));
+    try {
+      // The backend is the sole authority on vote tally and on whether consensus was
+      // reached: it persists the vote, and if this vote crosses REQUIRED_VOTES it merges
+      // the proposal itself and broadcasts PROPOSAL_VOTED{merged:true} + TREE_MUTATED to
+      // every attendee. We never decide to merge locally -- that's what let two browsers'
+      // vote counts drift out of sync with each other.
+      const result = await voteProposal(proposalId, voterName);
+      setGhostSprouts((prev) => {
+        const g = prev[proposalId];
+        if (!g) return prev; // PROPOSAL_VOTED broadcast may have already removed it (merged)
+        if (result.merged) {
+          const next = { ...prev };
+          delete next[proposalId];
+          return next;
+        }
+        const votes = g.votes.includes(voterName) ? g.votes : [...g.votes, voterName];
+        return { ...prev, [proposalId]: { ...g, votes, isMerging: false } };
+      });
+    } catch (e) {
+      console.error('Failed to cast vote:', e);
+      setGhostSprouts((prev) => {
+        const g = prev[proposalId];
+        return g ? { ...prev, [proposalId]: { ...g, isMerging: false } } : prev;
+      });
     }
   }, [ghostSprouts]);
 

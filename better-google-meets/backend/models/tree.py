@@ -199,6 +199,26 @@ class MerkleDAG:
 
             return ancestry
 
+    def summarize_committed(self, max_nodes: int = 25) -> str:
+        """
+        Compact plain-text summary of everything already merged into the tree, for grounding
+        LLM calls that don't do a full ancestry traversal (real-time caption distillation and
+        batch idea extraction) -- without this they only know the agenda's one-line title and
+        the last few raw utterances, with zero awareness of what's already been decided.
+        Excludes the root/agenda node itself since callers already pass that separately.
+        Flattened rather than hierarchical: cheap to compute, cheap to read, and a real
+        meeting's committed node count stays small enough that this doesn't need real
+        graph traversal to be useful.
+        """
+        with self._lock:
+            committed = [n for n in self.nodes.values() if n.id != self.root_id]
+            if not committed:
+                return "(nothing decided yet)"
+            tail = committed[-max_nodes:]
+            return "\n".join(
+                f"- [{n.node_type.value}] {n.text} (by {n.author})" for n in tail
+            )
+
     def compute_state_hash(self) -> str:
         """
         Computes a deterministic SHA-256 Merkle root hash of the entire tree state.

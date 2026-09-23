@@ -8,7 +8,7 @@ import { AgendaModal } from './components/AgendaModal';
 import { initializeMeetSdk, MeetSessionContext } from './services/meetSdk';
 import { setMeetingAgenda } from './services/api';
 import { SlateCard } from './types/tree';
-import { Layout, Columns, Square, Maximize2, Target } from 'lucide-react';
+import { Columns, Square, Maximize2 } from 'lucide-react';
 
 export const App: React.FC = () => {
   const [sessionCtx, setSessionCtx] = useState<MeetSessionContext | null>(null);
@@ -72,34 +72,30 @@ export const App: React.FC = () => {
   };
 
   return (
-    <div className="flex flex-col h-screen w-screen bg-obsidian-950 text-slate-100 overflow-hidden font-sans">
+    <div className="flex flex-col h-screen w-screen bg-ink-950 text-[#e8e6e1] overflow-hidden font-sans">
       {/* Top Navbar */}
-      <header className="h-10 bg-obsidian-900 border-b border-obsidian-800/90 px-3 flex items-center justify-between z-20 select-none">
-        <div className="flex items-center gap-2">
-          <div className="w-6 h-6 rounded-md bg-gradient-to-tr from-amber-500 to-sky-400 flex items-center justify-center font-bold text-obsidian-950 text-xs shadow">
-            BM
-          </div>
-          <h1 className="text-xs font-bold tracking-tight text-slate-100">
+      <header className="h-10 bg-ink-900 border-b border-ink-700 px-3 flex items-center justify-between z-20 select-none">
+        <div className="flex items-center gap-3 min-w-0">
+          <h1 className="text-xs font-semibold tracking-tight text-[#e8e6e1] flex-shrink-0">
             BetterMeets
           </h1>
           <button
             onClick={() => setIsAgendaOpen(true)}
-            className="hidden sm:flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-obsidian-950 hover:bg-obsidian-800 border border-obsidian-800 text-[11px] text-sky-300 transition max-w-[220px] truncate"
-            title="Meeting agenda & motive (Click to edit)"
+            className="hidden sm:block px-2 py-0.5 rounded border border-ink-600 text-[11px] text-ash-300 hover:text-[#e8e6e1] hover:border-ash-400 transition max-w-[240px] truncate text-left"
+            title="Meeting agenda (click to edit)"
           >
-            <Target className="w-3 h-3 text-amber-400 flex-shrink-0" />
-            <span className="truncate">{rootGoalText || 'Set Agenda'}</span>
+            {rootGoalText || 'Set agenda'}
           </button>
         </div>
 
         {/* View Mode Switcher */}
-        <div className="flex items-center bg-obsidian-950 border border-obsidian-800 rounded-lg p-0.5 text-xs">
+        <div className="flex items-center border border-ink-600 rounded p-0.5 text-xs">
           <button
             onClick={() => setViewMode('dual')}
-            className={`flex items-center gap-1 px-2.5 py-0.5 rounded-md transition ${
+            className={`flex items-center gap-1 px-2.5 py-0.5 rounded transition ${
               viewMode === 'dual'
-                ? 'bg-obsidian-800 text-sky-300 font-semibold shadow-sm'
-                : 'text-slate-400 hover:text-slate-200'
+                ? 'bg-ink-700 text-[#e8e6e1] font-medium'
+                : 'text-ash-400 hover:text-ash-300'
             }`}
           >
             <Columns className="w-3 h-3" />
@@ -107,10 +103,10 @@ export const App: React.FC = () => {
           </button>
           <button
             onClick={() => setViewMode('sidePanel')}
-            className={`flex items-center gap-1 px-2.5 py-0.5 rounded-md transition ${
+            className={`flex items-center gap-1 px-2.5 py-0.5 rounded transition ${
               viewMode === 'sidePanel'
-                ? 'bg-obsidian-800 text-sky-300 font-semibold shadow-sm'
-                : 'text-slate-400 hover:text-slate-200'
+                ? 'bg-ink-700 text-[#e8e6e1] font-medium'
+                : 'text-ash-400 hover:text-ash-300'
             }`}
           >
             <Square className="w-3 h-3" />
@@ -118,10 +114,10 @@ export const App: React.FC = () => {
           </button>
           <button
             onClick={() => setViewMode('mainStage')}
-            className={`flex items-center gap-1 px-2.5 py-0.5 rounded-md transition ${
+            className={`flex items-center gap-1 px-2.5 py-0.5 rounded transition ${
               viewMode === 'mainStage'
-                ? 'bg-obsidian-800 text-sky-300 font-semibold shadow-sm'
-                : 'text-slate-400 hover:text-slate-200'
+                ? 'bg-ink-700 text-[#e8e6e1] font-medium'
+                : 'text-ash-400 hover:text-ash-300'
             }`}
           >
             <Maximize2 className="w-3 h-3" />

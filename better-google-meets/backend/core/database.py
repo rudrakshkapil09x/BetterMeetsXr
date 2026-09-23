@@ -88,6 +88,13 @@ class Database:
             );
             """)
 
+            # Migration: mark whether a staged proposal has already been merged into the DAG.
+            # Guards against double-merge races and lets /proposals hydrate only pending ones.
+            try:
+                cursor.execute("ALTER TABLE proposal_diffs ADD COLUMN merged INTEGER DEFAULT 0")
+            except sqlite3.OperationalError:
+                pass  # column already exists
+
             cursor.execute("""
             CREATE TABLE IF NOT EXISTS transcripts (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -249,6 +256,60 @@ class Database:
 
     async def record_vote(self, meeting_id: str, proposal_id: str, voter: str) -> int:
         return await asyncio.to_thread(self._record_vote_sync, meeting_id, proposal_id, voter)
+
+    def _get_voters_sync(self, meeting_id: str, proposal_id: str) -> List[str]:
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+            SELECT voter FROM votes WHERE meeting_id = ? AND proposal_id = ? ORDER BY created_at ASC
+            """, (meeting_id, proposal_id))
+            return [r["voter"] for r in cursor.fetchall()]
+
+    async def get_voters(self, meeting_id: str, proposal_id: str) -> List[str]:
+        return await asyncio.to_thread(self._get_voters_sync, meeting_id, proposal_id)
+
+    def _mark_proposal_merged_sync(self, meeting_id: str, proposal_id: str) -> bool:
+        """Atomically flips merged 0->1. Returns True only for the caller that actually flipped it,
+        so concurrent vote requests crossing the threshold at once can't double-merge."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+            UPDATE proposal_diffs SET merged = 1 WHERE meeting_id = ? AND proposal_id = ? AND merged = 0
+            """, (meeting_id, proposal_id))
+            conn.commit()
+            return cursor.rowcount > 0
+
+    async def mark_proposal_merged(self, meeting_id: str, proposal_id: str) -> bool:
+        return await asyncio.to_thread(self._mark_proposal_merged_sync, meeting_id, proposal_id)
+
+    def _get_proposal_diff_sync(self, meeting_id: str, proposal_id: str) -> Optional[Dict[str, Any]]:
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+            SELECT * FROM proposal_diffs WHERE meeting_id = ? AND proposal_id = ?
+            """, (meeting_id, proposal_id))
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+    async def get_proposal_diff(self, meeting_id: str, proposal_id: str) -> Optional[Dict[str, Any]]:
+        return await asyncio.to_thread(self._get_proposal_diff_sync, meeting_id, proposal_id)
+
+    def _get_pending_proposals_sync(self, meeting_id: str) -> List[Dict[str, Any]]:
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+            SELECT * FROM proposal_diffs WHERE meeting_id = ? AND merged = 0 ORDER BY created_at ASC
+            """, (meeting_id,))
+            diffs = [dict(r) for r in cursor.fetchall()]
+            for d in diffs:
+                cursor.execute("""
+                SELECT voter FROM votes WHERE meeting_id = ? AND proposal_id = ? ORDER BY created_at ASC
+                """, (meeting_id, d["proposal_id"]))
+                d["voters"] = [r["voter"] for r in cursor.fetchall()]
+            return diffs
+
+    async def get_pending_proposals(self, meeting_id: str) -> List[Dict[str, Any]]:
+        return await asyncio.to_thread(self._get_pending_proposals_sync, meeting_id)
 
     def _save_transcript_sync(self, meeting_id: str, speaker: str, text: str) -> int:
         now = time.time()

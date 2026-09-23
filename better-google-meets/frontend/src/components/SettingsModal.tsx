@@ -1,20 +1,25 @@
 import React, { useState, useEffect } from 'react';
 import { EngineStatus } from '../types/tree';
-import { getEngineConfig, updateEngineConfig } from '../services/api';
-import { X, Cpu, Cloud, Zap, Shield, Check, RefreshCw } from 'lucide-react';
+import { getEngineConfig, updateEngineConfig, getApiBase } from '../services/api';
+import { X, Check, RefreshCw } from 'lucide-react';
 
 interface SettingsModalProps {
   isOpen: boolean;
   onClose: () => void;
 }
 
+const DEFAULT_BACKEND_URL = 'http://127.0.0.1:8000';
+const isExtension = typeof window !== 'undefined' && window.location.protocol === 'chrome-extension:';
+
 export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
   const [status, setStatus] = useState<EngineStatus | null>(null);
   const [provider, setProvider] = useState<string>('auto');
   const [geminiKey, setGeminiKey] = useState<string>('');
   const [lmUrl, setLmUrl] = useState<string>('http://localhost:1234/v1');
+  const [backendUrl, setBackendUrl] = useState<string>(DEFAULT_BACKEND_URL);
   const [isSaving, setIsSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
+  const [backendSaved, setBackendSaved] = useState(false);
 
   const fetchStatus = async () => {
     try {
@@ -30,6 +35,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose })
   useEffect(() => {
     if (isOpen) {
       fetchStatus();
+      getApiBase().then((base) => setBackendUrl(base === '/api' ? DEFAULT_BACKEND_URL : base));
     }
   }, [isOpen]);
 
@@ -49,18 +55,37 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose })
     }
   };
 
+  const handleSaveBackend = async () => {
+    const cleaned = backendUrl.trim().replace(/\/+$/, '') || DEFAULT_BACKEND_URL;
+    setBackendUrl(cleaned);
+    try {
+      if (isExtension && typeof chrome !== 'undefined' && chrome.storage?.sync) {
+        await chrome.storage.sync.set({ backendUrl: cleaned });
+      }
+      setBackendSaved(true);
+      setTimeout(() => setBackendSaved(false), 2000);
+      // Backend host changed: existing WS connection and cached API base are stale.
+      window.location.reload();
+    } catch (e) {
+      console.error('Failed to save backend URL:', e);
+    }
+  };
+
+  const PROVIDERS: Array<{ id: string; label: string; sub: string }> = [
+    { id: 'auto', label: 'Auto', sub: 'Local, then cloud' },
+    { id: 'lm_studio', label: 'LM Studio', sub: 'Local' },
+    { id: 'gemini_flash', label: 'Gemini', sub: 'Cloud' },
+  ];
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4 select-none">
-      <div className="bg-obsidian-900 border border-obsidian-700 rounded-2xl w-full max-w-lg shadow-2xl overflow-hidden glass-panel animate-in fade-in zoom-in-95 duration-150">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 select-none">
+      <div className="bg-ink-900 border border-ink-600 rounded-lg w-full max-w-lg shadow-xl overflow-hidden">
         {/* Header */}
-        <div className="flex items-center justify-between p-4 border-b border-obsidian-800">
-          <div className="flex items-center gap-2">
-            <Zap className="w-4 h-4 text-amber-400" />
-            <h3 className="text-sm font-bold text-slate-100">LLM Settings</h3>
-          </div>
+        <div className="flex items-center justify-between p-4 border-b border-ink-700">
+          <h3 className="text-sm font-semibold text-[#e8e6e1]">Settings</h3>
           <button
             onClick={onClose}
-            className="text-slate-400 hover:text-slate-200 p-1 rounded-lg hover:bg-obsidian-800 transition"
+            className="text-ash-400 hover:text-[#e8e6e1] p-1 rounded hover:bg-ink-800 transition"
           >
             <X className="w-4 h-4" />
           </button>
@@ -70,116 +95,100 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose })
         <div className="p-5 space-y-4 text-xs">
           {/* Active Provider Selection */}
           <div>
-            <label className="block text-slate-300 font-semibold mb-2">Engine</label>
-            <div className="grid grid-cols-3 gap-2">
-              <button
-                type="button"
-                onClick={() => setProvider('auto')}
-                className={`p-2.5 rounded-xl border flex flex-col items-center justify-center gap-1 transition ${
-                  provider === 'auto'
-                    ? 'border-amber-400 bg-amber-500/15 text-amber-300'
-                    : 'border-obsidian-700 bg-obsidian-950 text-slate-400 hover:border-slate-600'
-                }`}
-              >
-                <Zap className="w-4 h-4" />
-                <span className="font-semibold text-[11px]">Auto</span>
-                <span className="text-[9px] text-slate-500">Local → Cloud</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setProvider('lm_studio')}
-                className={`p-2.5 rounded-xl border flex flex-col items-center justify-center gap-1 transition ${
-                  provider === 'lm_studio'
-                    ? 'border-sky-400 bg-sky-500/15 text-sky-300'
-                    : 'border-obsidian-700 bg-obsidian-950 text-slate-400 hover:border-slate-600'
-                }`}
-              >
-                <Cpu className="w-4 h-4" />
-                <span className="font-semibold text-[11px]">LM Studio</span>
-                <span className="text-[9px] text-slate-500">Local</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setProvider('gemini_flash')}
-                className={`p-2.5 rounded-xl border flex flex-col items-center justify-center gap-1 transition ${
-                  provider === 'gemini_flash'
-                    ? 'border-purple-400 bg-purple-500/15 text-purple-300'
-                    : 'border-obsidian-700 bg-obsidian-950 text-slate-400 hover:border-slate-600'
-                }`}
-              >
-                <Cloud className="w-4 h-4" />
-                <span className="font-semibold text-[11px]">Gemini</span>
-                <span className="text-[9px] text-slate-500">Cloud</span>
-              </button>
+            <label className="block text-ash-300 font-medium mb-2">LLM engine</label>
+            <div className="flex border border-ink-600 rounded overflow-hidden">
+              {PROVIDERS.map((p, i) => (
+                <button
+                  key={p.id}
+                  type="button"
+                  onClick={() => setProvider(p.id)}
+                  className={`flex-1 p-2 flex flex-col items-center gap-0.5 transition ${
+                    i > 0 ? 'border-l border-ink-600' : ''
+                  } ${provider === p.id ? 'bg-ink-700 text-[#e8e6e1]' : 'text-ash-400 hover:text-ash-300'}`}
+                >
+                  <span className="font-medium text-[11px]">{p.label}</span>
+                  <span className="text-[9px] text-ash-400">{p.sub}</span>
+                </button>
+              ))}
             </div>
           </div>
 
-          {/* LM Studio Config */}
-          <div className="bg-obsidian-950/80 border border-obsidian-800 rounded-xl p-3 space-y-2">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-1.5 font-semibold text-slate-200">
-                <Cpu className="w-3.5 h-3.5 text-sky-400" />
-                LM Studio
-              </div>
-              <span
-                className={`px-2 py-0.5 rounded-full text-[10px] font-mono ${
-                  status?.lm_studio.online
-                    ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
-                    : 'bg-red-500/20 text-red-300 border border-red-500/30'
-                }`}
+          {/* Backend Server Location (LAN beta hosting) */}
+          <div className="border border-ink-600 rounded p-3 space-y-2">
+            <div className="font-medium text-[#e8e6e1]">Backend server</div>
+            <p className="text-[10px] text-ash-400 leading-relaxed">
+              Point at a shared machine's LAN address (e.g. http://192.168.1.42:8000) so everyone
+              in the meeting talks to the same deliberation tree. Reloads the panel on save.
+            </p>
+            <div className="flex items-center gap-2">
+              <input
+                type="text"
+                value={backendUrl}
+                onChange={(e) => setBackendUrl(e.target.value)}
+                placeholder={DEFAULT_BACKEND_URL}
+                disabled={!isExtension}
+                className="flex-1 bg-ink-950 border border-ink-600 rounded p-2 text-[#e8e6e1] font-mono text-[11px] focus:outline-none focus:border-ash-400 disabled:opacity-50"
+              />
+              <button
+                onClick={handleSaveBackend}
+                disabled={!isExtension}
+                className="flex items-center gap-1 px-2.5 py-2 rounded border border-ash-400 disabled:opacity-40 text-[#e8e6e1] text-[11px] font-medium transition shrink-0 hover:bg-ink-700"
               >
-                {status?.lm_studio.online ? 'Online' : 'Offline'}
+                {backendSaved ? <Check className="w-3 h-3" /> : null}
+                {backendSaved ? 'Saved' : 'Save'}
+              </button>
+            </div>
+            {!isExtension && (
+              <p className="text-[10px] text-pending">Only configurable when running as the installed extension.</p>
+            )}
+          </div>
+
+          {/* LM Studio Config */}
+          <div className="border border-ink-600 rounded p-3 space-y-2">
+            <div className="flex items-center justify-between">
+              <div className="font-medium text-[#e8e6e1]">LM Studio</div>
+              <span className={`text-[10px] font-mono ${status?.lm_studio.online ? 'text-merged' : 'text-conflict'}`}>
+                {status?.lm_studio.online ? 'online' : 'offline'}
               </span>
             </div>
             <div>
-              <label className="block text-[11px] text-slate-400 mb-1">URL</label>
+              <label className="block text-[11px] text-ash-400 mb-1">URL</label>
               <input
                 type="text"
                 value={lmUrl}
                 onChange={(e) => setLmUrl(e.target.value)}
                 placeholder="http://localhost:1234/v1"
-                className="w-full bg-obsidian-900 border border-obsidian-700 rounded-lg p-2 text-slate-200 font-mono text-[11px] focus:outline-none focus:border-sky-400"
+                className="w-full bg-ink-950 border border-ink-600 rounded p-2 text-[#e8e6e1] font-mono text-[11px] focus:outline-none focus:border-ash-400"
               />
             </div>
           </div>
 
           {/* Gemini Flash Config */}
-          <div className="bg-obsidian-950/80 border border-obsidian-800 rounded-xl p-3 space-y-2">
+          <div className="border border-ink-600 rounded p-3 space-y-2">
             <div className="flex items-center justify-between">
-              <div className="flex items-center gap-1.5 font-semibold text-slate-200">
-                <Cloud className="w-3.5 h-3.5 text-purple-400" />
-                Gemini API
-              </div>
-              <span
-                className={`px-2 py-0.5 rounded-full text-[10px] font-mono ${
-                  status?.gemini_flash.configured
-                    ? 'bg-purple-500/20 text-purple-300 border border-purple-500/30'
-                    : 'bg-obsidian-800 text-slate-500'
-                }`}
-              >
-                {status?.gemini_flash.configured ? 'Configured' : 'Unset'}
+              <div className="font-medium text-[#e8e6e1]">Gemini API (optional cloud fallback)</div>
+              <span className="text-[10px] font-mono text-ash-400">
+                {status?.gemini_flash.configured ? 'configured' : 'unset'}
               </span>
             </div>
             <div>
-              <label className="block text-[11px] text-slate-400 mb-1">API Key</label>
+              <label className="block text-[11px] text-ash-400 mb-1">API key</label>
               <input
                 type="password"
                 value={geminiKey}
                 onChange={(e) => setGeminiKey(e.target.value)}
                 placeholder="AIzaSy..."
-                className="w-full bg-obsidian-900 border border-obsidian-700 rounded-lg p-2 text-slate-200 font-mono text-[11px] focus:outline-none focus:border-purple-400"
+                className="w-full bg-ink-950 border border-ink-600 rounded p-2 text-[#e8e6e1] font-mono text-[11px] focus:outline-none focus:border-ash-400"
               />
             </div>
           </div>
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-between p-3.5 bg-obsidian-950 border-t border-obsidian-800">
+        <div className="flex items-center justify-between p-3.5 border-t border-ink-700">
           <button
             onClick={fetchStatus}
-            className="flex items-center gap-1 text-xs text-slate-400 hover:text-slate-200 transition"
+            className="flex items-center gap-1 text-xs text-ash-400 hover:text-[#e8e6e1] transition"
           >
             <RefreshCw className="w-3 h-3" />
             Refresh
@@ -188,17 +197,17 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose })
           <div className="flex items-center gap-2">
             <button
               onClick={onClose}
-              className="px-3 py-1.5 text-xs font-medium text-slate-400 hover:text-slate-200 transition"
+              className="px-3 py-1.5 text-xs font-medium text-ash-400 hover:text-[#e8e6e1] transition"
             >
               Cancel
             </button>
             <button
               onClick={handleSave}
               disabled={isSaving}
-              className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-obsidian-950 font-semibold text-xs transition shadow"
+              className="flex items-center gap-1.5 px-3.5 py-1.5 rounded bg-[#e8e6e1] text-ink-950 font-medium text-xs transition disabled:opacity-50"
             >
               {saveSuccess ? <Check className="w-3 h-3" /> : null}
-              {saveSuccess ? 'Saved' : isSaving ? 'Saving...' : 'Save'}
+              {saveSuccess ? 'Saved' : isSaving ? 'Saving…' : 'Save'}
             </button>
           </div>
         </div>
