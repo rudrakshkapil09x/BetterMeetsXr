@@ -244,3 +244,12 @@ export async function setMeetingAgenda(agenda: string): Promise<any> {
   }
   return res.json();
 }
+
+export async function seedDemoScenario(): Promise<{ status: string; meeting_id: string; nodes_count: number; ghost_count: number; slate_count: number }> {
+  const API_BASE = await getApiBase();
+  const res = await fetch(`${API_BASE}/session/seed-demo?meeting_id=${encodeURIComponent(getActiveMeetingId())}`, {
+    method: 'POST'
+  });
+  if (!res.ok) throw new Error(`Seed demo failed: ${res.statusText}`);
+  return res.json();
+}

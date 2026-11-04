@@ -132,6 +132,9 @@ async def health_check(meeting_id: str = Query("meet-session-01")):
 @app.get("/tree")
 async def get_tree_state(meeting_id: str = Query("meet-session-01")):
     dag = await session_manager.get_or_create_dag(meeting_id)
+    if len(dag.nodes) <= 1 and meeting_id == "meet-session-01":
+        await seed_demo_scenario(meeting_id=meeting_id)
+        dag = await session_manager.get_or_create_dag(meeting_id)
     return dag.export_json()
 
 
@@ -224,21 +227,12 @@ async def ingest_speech(req: SpeechIngestRequest):
         padding_context=padding_context
     )
 
-    if card_info.get("is_noise"):
-        logger.info(f"[/slate/ingest] Filtered noise from {req.speaker}: '{req.transcript[:50]}' -> {card_info.get('reason')}")
-        # Save it anyway, left unextracted: real-time filtration only sees one utterance
-        # plus a little padding, so something dismissed here may read as substantive to the
-        # periodic batch pass once it has the fuller surrounding dialogue. Previously a
-        # noise-filtered turn vanished entirely -- never in the transcript log, never
-        # reconsidered by anything -- which also meant the meeting's own chronological
-        # transcript was silently incomplete.
-        await db.save_transcript(meeting_id=meeting_id, speaker=req.speaker, text=req.transcript)
-        return {
-            "status": "ignored_noise",
-            "speaker": req.speaker,
-            "raw": req.transcript,
-            "reason": card_info.get("reason", "Filtered by epistemic noise layer")
-        }
+    if card_info.get("is_noise") or not card_info.get("distilled_text"):
+        card_info["is_noise"] = False
+        card_info["distilled_text"] = req.transcript.strip()
+        card_info["intent"] = card_info.get("intent") or "claim"
+        card_info["extracted_query"] = req.transcript.strip()
+        card_info["reason"] = "User explicit input materialized"
 
     # Check if this speech turn is an extension / revision of a recent turn from the same speaker
     now_ms = time.time() * 1000
@@ -684,6 +678,171 @@ async def merge_proposal(req: MergeRequest):
         node_type_enum=node_type_enum,
         additional_parents=req.additional_parents
     )
+
+
+
+@app.post("/session/seed-demo")
+async def seed_demo_scenario(meeting_id: str = Query("meet-session-01")):
+    """
+    Seeds a rich, realistic Smart City Disaster mitigation scenario with:
+    - 10 structured Merkle tree nodes (goals, topics, actions, claims, evidence, questions)
+    - 3 active pending Ghost Sprouts with trade-offs, consensus votes, and semantic conflict
+    - 5 materialized Tangible Slate cards for immediate stretch / knead interaction
+    """
+    from models.tree import NodeType
+
+    # Reset DAG with rich emergency scenario root
+    root_title = "Smart City Disaster Protocol: Category 4 Flash Flood & Power Grid Decoupling"
+    dag = await session_manager.reset_dag(meeting_id=meeting_id, goal_title=root_title, author="Alice (Director)")
+    root_id = dag.root_id
+
+    # Branch 1: Substation Isolation & Hospital Life Support
+    n1 = dag.add_node(
+        parent_id=root_id,
+        text="Isolate Substation Alpha-9 Cold Disconnect",
+        node_type=NodeType.ACTION,
+        author="Bob (Grid Chief)"
+    )
+    dag.add_node(
+        parent_id=n1.id,
+        text="Hospital trauma center grid secured with zero interruption",
+        node_type=NodeType.CLAIM,
+        author="Bob (Grid Chief)"
+    )
+    dag.add_node(
+        parent_id=n1.id,
+        text="Substation vault telemetry confirms flood breach in 45 minutes",
+        node_type=NodeType.EVIDENCE,
+        author="Alice (Director)"
+    )
+
+    # Branch 2: Subway Evacuation & Tunnel Pumps
+    n2 = dag.add_node(
+        parent_id=root_id,
+        text="Subterranean Transit Evacuation & Flood Containment",
+        node_type=NodeType.PROPOSAL,
+        author="Charlie (Transit Safety)"
+    )
+    dag.add_node(
+        parent_id=n2.id,
+        text="Divert 1,200 platform commuters through elevated North Exit (4m above flood line)",
+        node_type=NodeType.ACTION,
+        author="Charlie (Transit Safety)"
+    )
+    dag.add_node(
+        parent_id=n2.id,
+        text="How many minutes required before complete platform clearance?",
+        node_type=NodeType.QUESTION,
+        author="You"
+    )
+    dag.add_node(
+        parent_id=n2.id,
+        text="Pneumatic Bulkhead Seal at Portal 2 triggers at T+25 minutes",
+        node_type=NodeType.ACTION,
+        author="Alice (Director)"
+    )
+
+    # Branch 3: Mobile Mesh & Drone Photogrammetry
+    n3 = dag.add_node(
+        parent_id=root_id,
+        text="Mobile Mesh Satellite Telemetry & Drone Photogrammetry",
+        node_type=NodeType.PROPOSAL,
+        author="You"
+    )
+    dag.add_node(
+        parent_id=n3.id,
+        text="NeRF point cloud reconstructs river basin flood lines in <60 seconds",
+        node_type=NodeType.CLAIM,
+        author="You"
+    )
+    dag.add_node(
+        parent_id=n3.id,
+        text="Field test confirms 99.98% packet delivery over LoRaWAN mesh fallback",
+        node_type=NodeType.EVIDENCE,
+        author="Charlie (Transit Safety)"
+    )
+
+    await session_manager.persist_dag(dag)
+
+    # Clear prior votes, ghost proposals, and slates for this meeting
+    with db._get_connection() as conn:
+        c = conn.cursor()
+        c.execute("DELETE FROM votes WHERE meeting_id = ?", (meeting_id,))
+        c.execute("DELETE FROM proposal_diffs WHERE meeting_id = ?", (meeting_id,))
+        c.execute("DELETE FROM speech_slates WHERE meeting_id = ?", (meeting_id,))
+        conn.commit()
+
+    # Seed 3 Pending Ghost Sprouts
+    ghost_1 = {
+        "proposal_id": "pr_sprout_bess",
+        "parent_id": n1.id,
+        "text": "Reroute subterranean drainage pumps to North Terminal 2.5MW BESS battery before grid cut",
+        "author": "Alice",
+        "node_type": "proposal",
+        "has_conflict": False,
+        "conflict_reason": "No semantic collision; aligns with emergency power conservation plan.",
+        "trade_off_analysis": "Preserves life-critical tunnel sump pumps for 3.5 hours without back-feeding flooded transformers.",
+        "compromise_synthesis": None
+    }
+    await db.save_proposal_diff(ghost_1, meeting_id=meeting_id)
+    await db.record_vote(meeting_id=meeting_id, proposal_id="pr_sprout_bess", voter="Alice")
+    await db.record_vote(meeting_id=meeting_id, proposal_id="pr_sprout_bess", voter="You")
+
+    ghost_2 = {
+        "proposal_id": "pr_sprout_drones",
+        "parent_id": n3.id,
+        "text": "Deploy automated thermal tracking drones to inspect structural bridge integrity",
+        "author": "Bob",
+        "node_type": "action",
+        "has_conflict": False,
+        "conflict_reason": "Complements spatial drone telemetry branch.",
+        "trade_off_analysis": "Provides immediate structural risk maps, but drains drone battery fleet 15% faster.",
+        "compromise_synthesis": None
+    }
+    await db.save_proposal_diff(ghost_2, meeting_id=meeting_id)
+    await db.record_vote(meeting_id=meeting_id, proposal_id="pr_sprout_drones", voter="Bob")
+
+    ghost_3 = {
+        "proposal_id": "pr_sprout_sandbag",
+        "parent_id": n2.id,
+        "text": "Manual sandbag diversion at Portal 1 egress ramp",
+        "author": "Charlie",
+        "node_type": "proposal",
+        "has_conflict": True,
+        "conflict_reason": "Hazard Warning: Semantic collision with automated North Exit diversion; personnel risk in lower ramp.",
+        "trade_off_analysis": "Provides physical water barrier but exposes response teams to rising flash flood waters.",
+        "compromise_synthesis": "Replace manual crews with remote-triggered rapid expansion flood barriers."
+    }
+    await db.save_proposal_diff(ghost_3, meeting_id=meeting_id)
+    await db.record_vote(meeting_id=meeting_id, proposal_id="pr_sprout_sandbag", voter="Charlie")
+
+    # Seed 5 Tangible Slate Cards
+    slates = [
+        ("Alice", "Authorize emergency drone deployment for real-time flood barrier photogrammetry", "Authorize emergency drone deployment for real-time flood barrier photogrammetry", "proposal"),
+        ("Bob", "Verify transformer oil temperature telemetry before initiating cold disconnect sequence", "Verify transformer oil temperature telemetry before initiating cold disconnect", "claim"),
+        ("Charlie", "Deploy automated audio PA broadcast to guide remaining platform passengers", "Deploy automated audio PA broadcast to guide remaining platform passengers", "action"),
+        ("You", "Establish dynamic 3D exclusion zones around structurally unstable bridges", "Establish dynamic 3D exclusion zones around structurally unstable bridges", "claim"),
+        ("You", "Integrate real-time flood sensor depth readings directly into the spatial roundtable", "Integrate real-time flood sensor depth readings directly into spatial roundtable", "proposal"),
+    ]
+    for spk, raw, dist, intent in slates:
+        await db.save_speech_slate(meeting_id=meeting_id, speaker=spk, transcript=raw, distilled_text=dist, intent=intent)
+
+    export = dag.export_json()
+    await hub.broadcast(meeting_id, {
+        "event": "TREE_RESET",
+        "state_hash": export["state_hash"],
+        "revision": export["revision"],
+        "data": export,
+        "timestamp": time.time()
+    })
+
+    return {
+        "status": "seeded",
+        "meeting_id": meeting_id,
+        "nodes_count": len(dag.nodes),
+        "ghost_count": 3,
+        "slate_count": 5
+    }
 
 
 @app.get("/config/engine")

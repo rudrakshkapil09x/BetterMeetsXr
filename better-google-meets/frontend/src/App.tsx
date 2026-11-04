@@ -8,11 +8,20 @@ import { AgendaModal } from './components/AgendaModal';
 import { initializeMeetSdk, MeetSessionContext } from './services/meetSdk';
 import { setMeetingAgenda } from './services/api';
 import { SlateCard } from './types/tree';
-import { Columns, Square, Maximize2 } from 'lucide-react';
+import { Columns, Square, Maximize2, Glasses } from 'lucide-react';
+import { ArborXR } from './components/ArborXR';
 
 export const App: React.FC = () => {
   const [sessionCtx, setSessionCtx] = useState<MeetSessionContext | null>(null);
-  const [viewMode, setViewMode] = useState<'dual' | 'sidePanel' | 'mainStage'>('dual');
+  const [viewMode, setViewMode] = useState<'dual' | 'sidePanel' | 'mainStage' | 'vr'>(() => {
+    if (typeof window !== 'undefined') {
+      const p = new URLSearchParams(window.location.search).get('mode');
+      if (p === 'vr') return 'vr';
+      if (p === 'sidePanel') return 'sidePanel';
+      if (p === 'mainStage') return 'mainStage';
+    }
+    return 'dual';
+  });
   const [currentSpeaker, setCurrentSpeaker] = useState<string>(() => {
     if (typeof window !== 'undefined') {
       const params = new URLSearchParams(window.location.search);
@@ -34,6 +43,8 @@ export const App: React.FC = () => {
     stageProposal,
     castVote,
     resetMeetingTree,
+    seedScenario,
+    refreshTree,
     isConnected,
     lastStateHash,
     lastRevision,
@@ -123,6 +134,18 @@ export const App: React.FC = () => {
             <Maximize2 className="w-3 h-3" />
             Tree
           </button>
+          <button
+            onClick={() => setViewMode('vr')}
+            className={`flex items-center gap-1 px-2.5 py-0.5 rounded transition ${
+              viewMode === 'vr'
+                ? 'bg-cyan-700 text-white font-medium shadow-sm'
+                : 'text-cyan-400 hover:text-cyan-300'
+            }`}
+            title="3D Spatial Arbor and Texterial Slate"
+          >
+            <Glasses className="w-3 h-3" />
+            VR / 3D
+          </button>
         </div>
       </header>
 
@@ -154,6 +177,27 @@ export const App: React.FC = () => {
               onResetMeeting={resetMeetingTree}
               onOpenAgenda={() => setIsAgendaOpen(true)}
               currentVoter={currentSpeaker}
+            />
+          </div>
+        )}
+
+        {/* 3D VR Spatial Arbor & Tangible Slate */}
+        {viewMode === 'vr' && (
+          <div className="flex-1 overflow-hidden flex flex-col relative">
+            <ArborXR
+              tree={tree}
+              ghostSprouts={ghostSprouts}
+              slateCards={slateCards}
+              setSlateCards={setSlateCards}
+              selectedParentId={selectedParentId}
+              onSelectParent={setSelectedParentId}
+              onStageCard={handleStageCard}
+              onVote={castVote}
+              currentSpeaker={currentSpeaker}
+              setCurrentSpeaker={setCurrentSpeaker}
+              lastStateHash={lastStateHash}
+              lastRevision={lastRevision}
+              onSeedDemo={seedScenario}
             />
           </div>
         )}

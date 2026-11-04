@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { TreeSnapshot, GhostSprout, IdeaNode, ProposalDiff, NodeType, SlateCard } from '../types/tree';
-import { getTree, getSpeechSlates, getPendingProposals, analyzeProposal, voteProposal, resetTree as apiResetTree } from '../services/api';
+import { getTree, getSpeechSlates, getPendingProposals, analyzeProposal, voteProposal, resetTree as apiResetTree, seedDemoScenario } from '../services/api';
 import { useWebSocket, WebSocketEvent } from './useWebSocket';
 
 export function useArbor() {
@@ -114,6 +114,24 @@ export function useArbor() {
         getSpeechSlates().catch((e) => { console.error(e); return { cards: [] }; }),
         getPendingProposals().catch((e) => { console.error(e); return { proposals: [] }; })
       ]);
+      if (treeData && Object.keys(treeData.nodes || {}).length <= 1) {
+        try {
+          await seedDemoScenario();
+          const [t, s, p] = await Promise.all([getTree(), getSpeechSlates(), getPendingProposals()]);
+          if (t) setTree(t);
+          if (s?.cards) setSlateCards(s.cards);
+          if (p?.proposals) {
+            const hydrated: Record<string, GhostSprout> = {};
+            for (const item of p.proposals) {
+              hydrated[item.proposal_id] = { ...item, votes: item.votes, requiredVotes: item.required_votes, isMerging: false };
+            }
+            setGhostSprouts(hydrated);
+          }
+          return;
+        } catch (err) {
+          console.warn('Auto-seed fallback error:', err);
+        }
+      }
       if (treeData) setTree(treeData);
       if (slatesData && slatesData.cards) setSlateCards(slatesData.cards);
       // Rehydrate every still-pending proposal so a refresh or a newly-joined attendee
@@ -207,6 +225,18 @@ export function useArbor() {
     setSelectedParentId(data.root_id || 'node_0000');
   }, []);
 
+  const seedScenario = useCallback(async () => {
+    setIsLoading(true);
+    try {
+      await seedDemoScenario();
+      await fetchInitialTree();
+    } catch (e) {
+      console.error('Seed scenario error:', e);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [fetchInitialTree]);
+
   return {
     tree,
     ghostSprouts: Object.values(ghostSprouts),
@@ -217,6 +247,8 @@ export function useArbor() {
     stageProposal,
     castVote,
     resetMeetingTree,
+    seedScenario,
+    refreshTree: fetchInitialTree,
     isConnected,
     lastStateHash: tree?.state_hash || lastStateHash,
     lastRevision: tree?.revision || lastRevision,

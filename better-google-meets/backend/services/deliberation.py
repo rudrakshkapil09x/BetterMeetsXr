@@ -29,16 +29,11 @@ def is_noise(text: str) -> bool:
     if not text:
         return True
     clean = text.strip().lower()
-    if len(clean) < 8:
+    if len(clean) < 2:
+        return True
+    if clean in {"um", "uh", "hmm", "ah", "er", "like"}:
         return True
     if clean in UI_BLACKLIST_KEYWORDS:
-        return True
-    for phrase in UI_BLACKLIST_KEYWORDS:
-        if clean.startswith(phrase) or clean.endswith(phrase):
-            return True
-    # At least 3 words
-    words = [w for w in clean.split() if w.isalnum()]
-    if len(words) < 3:
         return True
     return False
 
@@ -143,17 +138,11 @@ class DeliberationEngine:
         distilled = data.get("distilled_text", "").strip()
         extracted_query = data.get("extracted_query", "").strip()
 
-        # If LLM classified as noise, or returned an empty distilled text
-        if is_llm_noise or not distilled:
-            logger.info(f"LLM Filtration: Rejected noise from {speaker}: '{raw_transcript[:60]}' (Reason: {reason})")
-            return {
-                "distilled_text": "",
-                "intent": "claim",
-                "extracted_query": "",
-                "is_noise": True,
-                "reason": reason or "Filtered by LLM epistemic filtration layer",
-                "provider_used": provider
-            }
+        # Ensure user idea is preserved and distilled text is never empty
+        if not distilled:
+            distilled = raw_transcript.strip()
+        if not extracted_query:
+            extracted_query = distilled
 
         intent = data.get("intent", "claim").lower()
         if intent not in ["claim", "proposal", "question", "action", "evidence"]:
